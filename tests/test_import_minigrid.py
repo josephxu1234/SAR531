@@ -1,9 +1,10 @@
 import gymnasium as gym
 import minigrid
+from sar531.src.SAREnv import SAREnv
 
 
 def test_import_minigrid():
-    env = gym.make("MiniGrid-Empty-5x5-v0", render_mode="human")
+    env = SAREnv()
     obs, info = env.reset(seed=100)
 
     for _ in range(10):
