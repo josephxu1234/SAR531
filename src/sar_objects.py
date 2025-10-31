@@ -6,6 +6,7 @@ from minigrid.core.world_object import WorldObj
 from minigrid.utils.rendering import fill_coords, point_in_circle, point_in_rect
 
 
+# TODO: update OBJECT_TO_IDX to include "person" and "exit" types
 class Person(WorldObj):
     """A person that needs to be rescued."""
 
@@ -61,8 +62,3 @@ class Exit(WorldObj):
 
         # Exit sign (bright rectangle at top)
         fill_coords(img, point_in_rect(0.25, 0.75, 0.15, 0.35), c)
-
-
-# Update the OBJECT_TO_IDX mapping to include our new objects
-# Note: We need to be careful about this - in a real implementation,
-# we might need to modify the constants file or handle this differently
