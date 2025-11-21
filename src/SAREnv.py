@@ -5,7 +5,7 @@ import math
 from minigrid.core.constants import COLOR_NAMES
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
-from minigrid.core.roomgrid import RoomGrid, Room
+from minigrid.core.roomgrid import Room, RoomGrid
 from minigrid.core.world_object import Door, Goal, Key, Lava, Wall
 from minigrid.manual_control import ManualControl
 from minigrid.minigrid_env import MiniGridEnv
