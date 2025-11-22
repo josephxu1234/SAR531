@@ -238,7 +238,44 @@ class SAREnv(RoomGrid):
             self.agent_dir = self.agent_start_dir
             # Ensure the start position is valid (cleared)
             self.grid.set(*self.agent_pos, None)
-        # If agent_start_pos is None, RoomGrid._gen_grid has already placed the agent randomly
+        elif self.exit_positions:
+            # Start at a random exit
+            self.agent_pos = self.exit_positions[
+                self._rand_int(0, len(self.exit_positions))
+            ]
+
+            # Face towards the center of the building
+            x, y = self.agent_pos
+            if x == 1:  # Left wall
+                self.agent_dir = 0  # Right
+            elif x == self.width - 2:  # Right wall
+                self.agent_dir = 2  # Left
+            elif y == 1:  # Top wall
+                self.agent_dir = 1  # Down
+            elif y == self.height - 2:  # Bottom wall
+                self.agent_dir = 3  # Up
+
+    def gen_obs_grid(self, agent_view_size=None):
+        """
+        Generate the sub-grid observed by the agent.
+        Overridden to ensure the agent sees what is under it (e.g. Exit) 
+        when not carrying anything.
+        """
+        grid, vis_mask = super().gen_obs_grid(agent_view_size)
+
+        # If not carrying anything, ensure the object under the agent is visible
+        if self.carrying is None:
+            agent_view_size = agent_view_size or self.agent_view_size
+            agent_pos_in_view = (agent_view_size // 2, agent_view_size - 1)
+            
+            # Get what is actually at the agent's position in the world
+            world_cell = self.grid.get(*self.agent_pos)
+            
+            # If there is something there (like an Exit), put it in the view
+            if world_cell is not None:
+                grid.set(*agent_pos_in_view, world_cell)
+                
+        return grid, vis_mask
 
     def step(self, action):
         """Override step to handle rescue mechanics and rewards."""
@@ -257,9 +294,10 @@ class SAREnv(RoomGrid):
         if self.people_rescued < self.num_people:
             terminated = False  # Override parent class termination
 
-        # Penalty fo steppin on collapsed floor
-        if fwd_cell is not None and fwd_cell.type == "lava":
+        # Penalty for steppin on collapsed floor
+        if action == self.actions.forward and fwd_cell is not None and fwd_cell.type == "lava":
             reward -= 100
+            print('Stepped on collapsed floor! -100 penalty.')
             terminated = True  # should we terminate here? or just penalize?
 
         agent_pos = tuple(self.agent_pos)
