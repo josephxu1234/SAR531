@@ -25,7 +25,7 @@ class SAREnv(RoomGrid):
         agent_start_pos: tuple[int, int] | None = None,
         agent_start_dir: int = 0,
         max_steps: int | None = None,
-        agent_view_size: int = 5,
+        agent_view_size: int = 3,
         **kwargs,
     ):
         self.num_people = num_people

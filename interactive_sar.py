@@ -15,10 +15,12 @@ from SAREnv import SAREnv
 
 
 def test_manual_control():
-    env = SAREnv(num_people=2, num_exits=3, render_mode="human")
+    env = SAREnv(room_size=10, num_rows=4, num_cols=5, num_people=3, num_exits=4, render_mode="human")
     manual_control = ManualControl(env)
     manual_control.start()
 
-
 if __name__ == "__main__":
+    # press tab to pick up a person
+    # press shift to drop the person
+    # arrow keys to rotate/move
     test_manual_control()
