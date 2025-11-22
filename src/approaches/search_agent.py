@@ -320,7 +320,7 @@ def run_search_demo():
     )
     
     obs, _ = env.reset()
-    agent = FrontierAgent(env)
+    agent = SearchAgent(env)
     
     # Initial map update
     agent.update_map(obs, env.agent_pos, env.agent_dir)
