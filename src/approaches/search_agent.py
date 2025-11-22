@@ -17,7 +17,7 @@ LAVA = 3
 EXIT = 4
 PERSON = 5
 
-class FrontierAgent:
+class SearchAgent:
     def __init__(self, env: SAREnv):
         self.env = env
         self.width = env.width
