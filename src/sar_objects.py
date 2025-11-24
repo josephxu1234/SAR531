@@ -6,7 +6,6 @@ from minigrid.core.world_object import WorldObj
 from minigrid.utils.rendering import fill_coords, point_in_circle, point_in_rect
 
 
-# TODO: update OBJECT_TO_IDX to include "person" and "exit" types
 class Person(WorldObj):
     """A person that needs to be rescued."""
 
@@ -19,24 +18,24 @@ class Person(WorldObj):
         return True
 
     def can_overlap(self):
-        return False
+        return False  # Cannot walk onto person, must pickup from adjacent
 
     def render(self, img):
         c = COLORS[self.color]
 
         # Draw a simple humanoid figure
         # Head (circle at top)
-        fill_coords(img, point_in_circle(cx=0.5, cy=0.2, r=0.12), c)
+        fill_coords(img, point_in_circle(cx=0.5, cy=0.25, r=0.15), c)
 
         # Body (rectangle in middle)
-        fill_coords(img, point_in_rect(0.4, 0.6, 0.3, 0.7), c)
+        fill_coords(img, point_in_rect(0.35, 0.65, 0.35, 0.7), c)
 
         # Arms (horizontal rectangles)
-        fill_coords(img, point_in_rect(0.2, 0.8, 0.4, 0.5), c)
+        fill_coords(img, point_in_rect(0.15, 0.85, 0.42, 0.52), c)
 
         # Legs (vertical rectangles)
-        fill_coords(img, point_in_rect(0.35, 0.45, 0.7, 0.9), c)
-        fill_coords(img, point_in_rect(0.55, 0.65, 0.7, 0.9), c)
+        fill_coords(img, point_in_rect(0.37, 0.48, 0.7, 0.95), c)
+        fill_coords(img, point_in_rect(0.52, 0.63, 0.7, 0.95), c)
 
 
 class Exit(WorldObj):
@@ -55,10 +54,12 @@ class Exit(WorldObj):
     def render(self, img):
         c = COLORS[self.color]
 
-        # Draw exit as a door with "EXIT" indication
-        # Door frame
-        fill_coords(img, point_in_rect(0.1, 0.9, 0.1, 0.9), c)
-        fill_coords(img, point_in_rect(0.2, 0.8, 0.2, 0.8), (0, 0, 0))
+        # Draw exit as a door frame
+        # Outer door frame (green border)
+        fill_coords(img, point_in_rect(0.05, 0.95, 0.05, 0.95), c)
+        
+        # Inner door (dark/black interior)
+        fill_coords(img, point_in_rect(0.15, 0.85, 0.15, 0.85), (0, 0, 0))
 
-        # Exit sign (bright rectangle at top)
-        fill_coords(img, point_in_rect(0.25, 0.75, 0.15, 0.35), c)
+        # Exit sign (bright rectangle at top center)
+        fill_coords(img, point_in_rect(0.3, 0.7, 0.08, 0.25), c)

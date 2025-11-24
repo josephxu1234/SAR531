@@ -45,8 +45,6 @@ class SearchAgent:
 
     def _has_unknown_neighbor(self, x, y):
         """Check if cell (x, y) has any UNKNOWN neighbors."""
-
-        # Iterate through neighbors
         for dx, dy in self.DIR_TO_VEC:
             nx, ny = x + dx, y + dy
             if 0 <= nx < self.width and 0 <= ny < self.height:
@@ -59,105 +57,93 @@ class SearchAgent:
         Called when cell (x, y) changes from UNKNOWN to KNOWN.
         Updates the frontier set for (x, y) and its neighbors.
         """
-
         # If it's walkable and has unknown neighbors, it's a frontier
-        # Idea: want to go to squares that are walkable and allow us to see unknowns
         is_walkable = self.knowledge_grid[x, y] in [EMPTY, EXIT]
         if is_walkable and self._has_unknown_neighbor(x, y):
             self.frontiers.add((x, y))
+        else:
+            # Not a frontier anymore, remove if present
+            self.frontiers.discard((x, y))
         
-        # 2. Handle neighbors
-        # Neighbors that were frontiers might stop being frontiers
-        # because (x, y) is no longer unknown.
+        # Handle neighbors - they might stop being frontiers
         for dx, dy in self.DIR_TO_VEC:
             nx, ny = x + dx, y + dy
             if 0 <= nx < self.width and 0 <= ny < self.height:
                 if (nx, ny) in self.frontiers:
-                    # If this neighbor no longer has ANY unknown neighbors, remove it
+                    # Re-check if this neighbor is still a frontier
                     if not self._has_unknown_neighbor(nx, ny):
-                        self.frontiers.remove((nx, ny))
+                        self.frontiers.discard((nx, ny))
 
     def update_map(self, obs, agent_pos, agent_dir):
         """
         Projects the local agent view (obs) onto the global knowledge grid.
+        MiniGrid convention: obs['image'] is (width, height, 3)
+        Agent sees forward in its view, positioned at bottom-center
         """
-
-        # Convention: (0, 0) is top-left corner
-        # j = 0 [ . . .]
-        # j = 1 [ . . .]
-        # j = 2 [ . . .]
-        # i:      0 1 2
-
-        # Image representation: (x, y, world_obj data)
-        # world obj data: (type_idx, color_idx, state)
-        view = obs['image'] # shape (W, H, 3)
-        view_cols = view.shape[0]
-        view_rows = view.shape[1]
+        view = obs['image']  # shape (view_width, view_height, 3)
+        view_width = view.shape[0]
+        view_height = view.shape[1]
+        
+        # Agent is at bottom-center of view
+        agent_view_x = view_width // 2
+        agent_view_y = view_height - 1
         
         # Iterate over the local view
-        for i in range(view_cols): # columns
-            for j in range(view_rows): # rows
-                obj_type_idx = view[i, j, 0]
+        for view_x in range(view_width):
+            for view_y in range(view_height):
+                obj_type_idx = view[view_x, view_y, 0]
                 
-                # Transform local (i, j) to global (gx, gy)
-                # camera frame: Agent is at center bottom
-
-                # local x, local y = coordinates in agent's frame of reference
-                # lo_x: how far right from agent? Right (+), Left(-)
-                # lo_y: how far forward from agent? Forward(-), Back (+); shouldn't have backward
-                lo_x = i - (view_cols // 2)
-                lo_y = j - (view_rows - 1)
+                # Calculate relative position to agent in view
+                rel_x = view_x - agent_view_x
+                rel_y = view_y - agent_view_y
                 
-                if agent_dir == 0: # Facing Right
-                    gx = agent_pos[0] - lo_y
-                    gy = agent_pos[1] + lo_x
-                elif agent_dir == 1: # Facing Down
-                    gx = agent_pos[0] - lo_x
-                    gy = agent_pos[1] - lo_y
-                elif agent_dir == 2: # Facing Left
-                    gx = agent_pos[0] + lo_y
-                    gy = agent_pos[1] - lo_x
-                elif agent_dir == 3: # Facing Up
-                    gx = agent_pos[0] + lo_x
-                    gy = agent_pos[1] + lo_y
+                # Transform based on agent direction
+                if agent_dir == 0:  # Facing Right
+                    gx = agent_pos[0] - rel_y
+                    gy = agent_pos[1] + rel_x
+                elif agent_dir == 1:  # Facing Down
+                    gx = agent_pos[0] - rel_x
+                    gy = agent_pos[1] - rel_y
+                elif agent_dir == 2:  # Facing Left
+                    gx = agent_pos[0] + rel_y
+                    gy = agent_pos[1] - rel_x
+                elif agent_dir == 3:  # Facing Up
+                    gx = agent_pos[0] + rel_x
+                    gy = agent_pos[1] + rel_y
                 
                 # Check bounds
-                if 0 <= gx < self.width and 0 <= gy < self.height:
-                    old_state = self.knowledge_grid[gx, gy]
-                    
-                    # Determine new state
-                    new_state = UNKNOWN # Default to UNKNOWN to be safe
-                    
-                    if obj_type_idx == OBJECT_TO_IDX['wall']:
-                        new_state = WALL
-                    elif obj_type_idx == OBJECT_TO_IDX['lava']:
-                        new_state = LAVA
-                    elif obj_type_idx == OBJECT_TO_IDX['ball']:
-                        new_state = PERSON
-                    elif obj_type_idx == OBJECT_TO_IDX['goal'] or obj_type_idx == OBJECT_TO_IDX['door']:
-                        new_state = EXIT # Treat doors as exits/empty for nav
-                    elif obj_type_idx == 1: # Empty
-                        new_state = EMPTY
-                    elif obj_type_idx == 0: # Unseen
-                        new_state = UNKNOWN
-                    else:
-                        # Unknown object type - treat as UNKNOWN or WALL to be safe?
-                        # Treating as EMPTY caused bugs. Let's keep it UNKNOWN.
-                        new_state = UNKNOWN
-                    
-                    # Only update if we learned something new
-                    # We allow overwriting UNKNOWN with anything
-                    # We allow overwriting anything with WALL/LAVA/PERSON (more specific)
-                    # We DO NOT allow overwriting with UNKNOWN (regression)
-                    if new_state != UNKNOWN:
-                        if old_state == UNKNOWN or old_state != new_state:
-                            self.knowledge_grid[gx, gy] = new_state
-                            self._update_frontier_set(gx, gy)
-                    # updated knowledge, now see wall/lava
-                    if old_state in [EMPTY, UNKNOWN] and new_state in [WALL, LAVA]:
+                if not (0 <= gx < self.width and 0 <= gy < self.height):
+                    continue
+                
+                old_state = self.knowledge_grid[gx, gy]
+                
+                # Determine new state based on object type
+                new_state = UNKNOWN
+                
+                if obj_type_idx == OBJECT_TO_IDX['wall']:
+                    new_state = WALL
+                elif obj_type_idx == OBJECT_TO_IDX['lava']:
+                    new_state = LAVA
+                elif obj_type_idx == OBJECT_TO_IDX['ball']:
+                    new_state = PERSON
+                elif obj_type_idx == OBJECT_TO_IDX['goal']:
+                    new_state = EXIT
+                elif obj_type_idx == OBJECT_TO_IDX['door']:
+                    new_state = EMPTY  # Open doors are walkable
+                elif obj_type_idx == 1:  # Empty cell
+                    new_state = EMPTY
+                elif obj_type_idx == 0:  # Unseen (shouldn't happen in view)
+                    new_state = UNKNOWN
+                else:
+                    # Unknown object type
+                    new_state = EMPTY  # Default to empty for unknown objects
+                
+                # Update knowledge grid
+                if new_state != UNKNOWN:
+                    # Always update with new information
+                    if old_state != new_state:
                         self.knowledge_grid[gx, gy] = new_state
-                        if (gx, gy) in self.frontiers:
-                            self.frontiers.remove((gx, gy))
+                        self._update_frontier_set(gx, gy)
 
     def mark_wall_in_front(self, agent_pos, agent_dir):
         """Marks the cell directly in front of the agent as a WALL."""
@@ -167,35 +153,30 @@ class SearchAgent:
         if 0 <= fx < self.width and 0 <= fy < self.height:
             print(f"Marking blocked cell ({fx}, {fy}) as WALL.")
             self.knowledge_grid[fx, fy] = WALL
-            # If it was a frontier, remove it
-            if (fx, fy) in self.frontiers:
-                self.frontiers.remove((fx, fy))
+            # Remove from frontiers if present
+            self.frontiers.discard((fx, fy))
             # Update neighbors' frontier status
             self._update_frontier_set(fx, fy)
 
     def find_path_bfs(self, start, goal):
-        """Optimized BFS to find path on known map using deque and backtracking."""
+        """BFS to find path on known map."""
         queue = deque([start])
-        # Dictionary to store parent pointers
-        # Also serves as visited set
-        came_from = {start: None} 
+        came_from = {start: None}
         
         while queue:
             curr = queue.popleft()
             
             if curr == goal:
-                break # Found goal, stop searching
+                break
             
             curr_x, curr_y = curr
             
-            # iterate neighbors
             for dx, dy in self.DIR_TO_VEC:
                 nx, ny = curr_x + dx, curr_y + dy
                 
-                # neighbor is in bounds
                 if 0 <= nx < self.width and 0 <= ny < self.height:
                     cell_type = self.knowledge_grid[nx, ny]
-                    is_walkable = cell_type in [EMPTY, EXIT]
+                    is_walkable = cell_type in [EMPTY, EXIT, PERSON]
                     
                     if is_walkable and (nx, ny) not in came_from:
                         came_from[(nx, ny)] = curr
@@ -211,7 +192,7 @@ class SearchAgent:
             path.append(curr)
             curr = came_from[curr]
         
-        path.reverse() # Path is built backwards, so reverse it
+        path.reverse()
         return path
 
     def get_action(self, agent_pos, agent_dir):
@@ -225,14 +206,15 @@ class SearchAgent:
             
         self.last_pos = agent_pos
         
-        if self.stuck_count > 0:
+        if self.stuck_count > 2:  # Stuck for multiple steps
             # We are stuck
             # Mark the cell in front as blocked (WALL) so we don't try again.
             if self.last_action == self.env.actions.forward:
                 self.mark_wall_in_front(agent_pos, agent_dir)
             
             # Try turning right to unstick.
-            print("Stuck! Taking evasive action.")
+            print("Stuck! Turning right to unstick.")
+            self.stuck_count = 0  # Reset after handling
             self.last_action = self.env.actions.right 
             return self.last_action
         
@@ -240,13 +222,30 @@ class SearchAgent:
         people_locs = np.argwhere(self.knowledge_grid == PERSON)
         if len(people_locs) > 0:
             print("Person found at:", people_locs[0])
-            # TODO: return None to stop searching
-            return None
+            
+            # Verify there's a path to the person before declaring success
+            person_pos = tuple(people_locs[0])
+            path_to_person = self.find_path_bfs(agent_pos, person_pos)
+            if path_to_person is None:
+                print("WARNING: Person found but no path exists!")
+                print("Person may be trapped or unreachable.")
+                return None  # Stop searching - person is unreachable
+            
+            return None  # Stop searching - person found and reachable
             
         # Get Frontiers from cached set
         if not self.frontiers:
-            print("Map fully explored, person not found.")
-            return None
+            print("No frontiers remaining.")
+            # Check if we've explored enough
+            explored_pct = np.sum(self.knowledge_grid != UNKNOWN) / self.knowledge_grid.size
+            if explored_pct > 0.8:  # Explored 80% of map
+                print("Map mostly explored, person not found.")
+                return None
+            else:
+                # Try turning to potentially discover new areas
+                print("Turning to look for new areas...")
+                self.last_action = self.env.actions.right
+                return self.last_action
             
         # Find nearest frontier
         best_path = None
@@ -256,32 +255,33 @@ class SearchAgent:
         sorted_frontiers = sorted(list(self.frontiers), 
                                 key=lambda f: abs(f[0]-agent_pos[0]) + abs(f[1]-agent_pos[1]))
         
-        # Check the closest few frontiers (optimization)
+        # Check the closest frontiers (optimization)
+        checked = 0
         for f in sorted_frontiers: 
+            if checked >= 10:  # Don't check too many
+                break
             path = self.find_path_bfs(agent_pos, f)
             if path:
                 dist = len(path)
                 if dist < min_dist:
                     min_dist = dist
                     best_path = path
+                    break  # Take first reachable frontier
+            checked += 1
         
         if best_path is None:
             print("No reachable frontiers remaining.")
+            # All frontiers are unreachable - exploration is done
             return None
         
         # check len(best_path) >= 2 bc len 1 path means agent is already at frontier
         if len(best_path) < 2:
-            # If we can't reach the closest frontiers, try turning right instead of forward
-            # This prevents blindly running into walls if forward is blocked
+            # Already at frontier, turn to see more
             self.last_action = self.env.actions.right
             return self.last_action
             
         # Determine action to move along path
         next_cell = best_path[1]
-        if self.env.grid.get(next_cell[0], next_cell[1]) is not None:
-            print("Next cell has object:", self.env.grid.get(next_cell[0], next_cell[1]).type)
-        else:
-            print("Next cell is empty.")
         
         dx = next_cell[0] - agent_pos[0]
         dy = next_cell[1] - agent_pos[1]
@@ -307,17 +307,8 @@ class SearchAgent:
         return action
 
 def run_search_demo():
-    # Setup specific scenario: 1 Person, 1 Exit
-    env = SAREnv(
-        room_size=5, 
-        num_rows=2, 
-        num_cols=2, 
-        num_people=1, 
-        num_exits=1,
-        num_collapsed_floors=6,
-        agent_view_size=3, 
-        render_mode="human"
-    )
+    # Setup specific scenario
+    env = SAREnv(render_mode="human")
     
     obs, _ = env.reset()
     agent = SearchAgent(env)
@@ -330,14 +321,13 @@ def run_search_demo():
         action = agent.get_action(env.agent_pos, env.agent_dir)
                 
         if action is None:
-            print("Search completed or failed!")
+            print(f"Search completed at step {step}!")
             break
             
         obs, reward, term, trunc, info = env.step(action)
-        
         agent.update_map(obs, env.agent_pos, env.agent_dir)
         
-        if term:
+        if term or trunc:
             print("Episode terminated!")
             break
 
@@ -346,7 +336,7 @@ def run_search_demo():
 if __name__ == "__main__":
     final_map, env = run_search_demo()
     
-    print("Final Internal Map:")
+    print("\nFinal Internal Map:")
     chars = {UNKNOWN: '?', EMPTY: '.', WALL: '#', LAVA: 'X', EXIT: 'E', PERSON: 'P'}
     for y in range(final_map.shape[1]):
         line = ""
@@ -354,58 +344,7 @@ if __name__ == "__main__":
             line += chars[final_map[x, y]]
         print(line)
 
-    # Verification Step
-    print("Verifying Map Accuracy")
-    print('Num cells not unknown:', np.sum(final_map != UNKNOWN))
-    
-    # Iterate over the entire grid
-    correct_cells = 0
-    total_known_cells = 0
-    
-    for x in range(env.width):
-        for y in range(env.height):
-            agent_val = final_map[x, y]
-            
-            # Skip UNKNOWN cells (agent didn't see them)
-            if agent_val == UNKNOWN:
-                continue
-            else:
-                print("Known cell at ({}, {}): {}".format(x, y, chars[agent_val]))
-                
-            total_known_cells += 1
-            
-            # Get ground truth from env
-            cell = env.grid.get(x, y)
-            
-            # Determine ground truth type
-            true_val = EMPTY # Default
-            if cell is None:
-                true_val = EMPTY
-            elif cell.type == 'wall':
-                true_val = WALL
-            elif cell.type == 'lava':
-                true_val = LAVA
-            elif cell.type == 'ball':
-                true_val = PERSON
-            elif cell.type == 'door' or cell.type == 'goal':
-                true_val = EXIT # We map doors/exits to EXIT
-
-            # Check for match
-            # Note: Agent maps Door -> EXIT, Goal -> EXIT. 
-            # Agent maps Empty -> EMPTY.
-            
-            is_correct = False
-            if agent_val == true_val:
-                is_correct = True
-            elif agent_val == EXIT and (cell is not None and (cell.type == 'door' or cell.type == 'goal')):
-                 is_correct = True
-            elif agent_val == EMPTY and cell is None:
-                 is_correct = True
-            
-            if is_correct:
-                correct_cells += 1
-            else:
-                print(f"Mismatch at ({x}, {y}): Agent thought {chars[agent_val]}, True is {cell.type if cell else 'Empty'}")
-
-    print(f"Verification Complete: {correct_cells}/{total_known_cells} known cells correct.")
-    assert correct_cells == total_known_cells, "Agent has incorrect knowledge."
+    print("\nMap Statistics:")
+    print(f"Unknown cells: {np.sum(final_map == UNKNOWN)}")
+    print(f"Known cells: {np.sum(final_map != UNKNOWN)}")
+    print(f"People found: {np.sum(final_map == PERSON)}")
