@@ -1,7 +1,7 @@
 import numpy as np
 from heapq import heappush, heappop
 
-# Map states 
+# Map states (match SearchAgent)
 UNKNOWN = 0
 EMPTY = 1
 WALL = 2
@@ -215,30 +215,6 @@ class RescueAgent:
         print(f"\n=== Starting Rescue Operation ===")
         print(f"Person location (from knowledge): {person_pos}")
         print(f"Agent starting at: {tuple(self.env.agent_pos)}")
-        
-        # Verify person is actually there in the environment
-        actual_cell = self.env.grid.get(*person_pos)
-        if actual_cell is None or actual_cell.type != "ball":
-            print(f"WARNING: Knowledge grid shows person at {person_pos}, but double checking environment...")
-            # Search nearby for the person
-            found_person = False
-            for dx in range(-2, 3):
-                for dy in range(-2, 3):
-                    check_x = person_pos[0] + dx
-                    check_y = person_pos[1] + dy
-                    if 0 <= check_x < self.env.width and 0 <= check_y < self.env.height:
-                        cell = self.env.grid.get(check_x, check_y)
-                        if cell is not None and cell.type == "ball":
-                            print(f"Found person at actual position: ({check_x}, {check_y})")
-                            person_pos = (check_x, check_y)
-                            found_person = True
-                            break
-                if found_person:
-                    break
-            
-            if not found_person:
-                print("ERROR: Person not found in environment!")
-                return False
 
         # Step 1: Navigate to person (adjacent, not on top of)
         agent_pos = tuple(self.env.agent_pos)
