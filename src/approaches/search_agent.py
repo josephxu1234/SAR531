@@ -195,6 +195,48 @@ class SearchAgent:
         path.reverse()
         return path
 
+    def get_known_people_locations(self):
+        """Returns list of (x,y) tuples where PERSON is marked on grid"""
+        return [tuple(x) for x in np.argwhere(self.knowledge_grid == PERSON)]
+
+    def remove_person_from_memory(self, pos):
+        """Called after successful rescue"""
+        if self.knowledge_grid[pos] == PERSON:
+            self.knowledge_grid[pos] = EMPTY
+            # Re-add this area to frontiers so we look through it again if needed
+            self._update_frontier_set(pos[0], pos[1])
+
+    def mark_unreachable(self, pos):
+        """Mark a position as unreachable (treat as wall for pathfinding)"""
+        # We don't want to mark it as WALL permanently because it might be reachable later
+        # But for now, let's just log it. 
+        # In a more complex system, we'd have a separate 'unreachable' set.
+        print(f"Marking {pos} as unreachable for now.")
+        pass
+
+    def search_until_new_discovery(self):
+        """
+        Runs the get_action loop for one step.
+        Returns: 'CONTINUE', 'FOUND_NEW_PERSON', 'EXPLORED_ALL'
+        """
+        # Check if we already know about a person
+        if len(self.get_known_people_locations()) > 0:
+            return 'FOUND_NEW_PERSON'
+            
+        action = self.get_action(self.env.agent_pos, self.env.agent_dir)
+        
+        if action is None:
+            # get_action returns None if:
+            # 1. Person found (handled above)
+            # 2. No frontiers (EXPLORED_ALL)
+            return 'EXPLORED_ALL'
+            
+        # Execute the action
+        obs, reward, term, trunc, info = self.env.step(action)
+        self.update_map(obs, self.env.agent_pos, self.env.agent_dir)
+        
+        return 'CONTINUE'
+
     def get_action(self, agent_pos, agent_dir):
         """Decides the next action."""
         
@@ -219,19 +261,14 @@ class SearchAgent:
             return self.last_action
         
         # Check if we found the person
+        # In multi-person mode, we don't stop just because we see ONE person
+        # We stop if we see a NEW person that we haven't rescued yet.
+        # But get_action is low-level. The controller handles the "stop if person found" logic.
+        # Here we just return None if we found someone so the controller can check.
         people_locs = np.argwhere(self.knowledge_grid == PERSON)
         if len(people_locs) > 0:
             print("Person found at:", people_locs[0])
-            
-            # Verify there's a path to the person before declaring success
-            person_pos = tuple(people_locs[0])
-            path_to_person = self.find_path_bfs(agent_pos, person_pos)
-            if path_to_person is None:
-                print("WARNING: Person found but no path exists!")
-                print("Person may be trapped or unreachable.")
-                return None  # Stop searching - person is unreachable
-            
-            return None  # Stop searching - person found and reachable
+            return None  # Stop searching - let controller handle rescue
             
         # Get Frontiers from cached set
         if not self.frontiers:

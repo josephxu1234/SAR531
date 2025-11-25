@@ -3,133 +3,99 @@ from SAREnv import SAREnv
 from search_agent import SearchAgent, UNKNOWN, EMPTY, WALL, LAVA, EXIT, PERSON
 from rescue_agent import RescueAgent
 
-def run_integrated_search_and_rescue():
+def run_multi_person_mission():
     """
-    Integrated demo that runs search phase, then rescue phase on the same environment.
+    Integrated demo that runs search and rescue for multiple people.
     """
     # 1. Setup environment with consistent parameters
     print("=" * 60)
-    print("SEARCH AND RESCUE MISSION")
+    print("MULTI-PERSON SEARCH AND RESCUE MISSION")
     print("=" * 60)
+    
+    TOTAL_PEOPLE = 3
     
     env = SAREnv(
         room_size=5,
-        num_rows=2,
-        num_cols=2,
-        num_people=1,
-        num_exits=1,
-        num_collapsed_floors=6,
+        num_rows=3,
+        num_cols=3,
+        num_people=TOTAL_PEOPLE,
+        num_exits=2,
+        num_collapsed_floors=5,
         agent_view_size=3,
-        # agent_view_size uses default from SAREnv
         render_mode="human"
     )
 
     obs, _ = env.reset()
     
-    # 2. SEARCH PHASE - Find the person
-    print("\n" + "=" * 60)
-    print("PHASE 1: SEARCH")
-    print("=" * 60)
-    print("Objective: Locate person in need of rescue\n")
-    
+    # Initialize Search Agent (The Map Keeper)
     search_agent = SearchAgent(env)
     search_agent.update_map(obs, env.agent_pos, env.agent_dir)
     
-    search_complete = False
-    max_search_steps = 500
+    max_steps = 2000
+    step_count = 0
     
-    for step in range(max_search_steps):
-        env.render()
+    while env.people_rescued < TOTAL_PEOPLE and step_count < max_steps:
+        print(f"\n--- Status: Rescued {env.people_rescued}/{TOTAL_PEOPLE} ---")
         
-        action = search_agent.get_action(env.agent_pos, env.agent_dir)
+        # --- Step 1: Check Knowledge Base ---
+        # Do we already know where a person is?
+        known_people = search_agent.get_known_people_locations()
         
-        if action is None:
-            print(f"\nSearch completed at step {step}!")
-            search_complete = True
-            break
-        
-        obs, reward, term, trunc, info = env.step(action)
-        search_agent.update_map(obs, env.agent_pos, env.agent_dir)
-        
-        # Check if we accidentally picked up the person during search
-        if info.get('carrying_person', False):
-            print("\nWARNING: Person picked up during search phase!")
-            print("Dropping person at current location for rescue phase...")
-            # Drop the person (they become a ball object on the ground)
-            if env.carrying is not None:
-                env.grid.set(*env.agent_pos, env.carrying)
-                env.carrying = None
-        
-        if term or trunc:
-            print("\nSearch terminated early!")
-            break
-    
-    if not search_complete:
-        print(f"\nSearch phase ended after {max_search_steps} steps without finding person.")
-    
-    # Display search results
-    print("\n" + "-" * 60)
-    print("SEARCH PHASE COMPLETE")
-    print("-" * 60)
-    
-    knowledge_grid = search_agent.knowledge_grid
-    people_found = np.sum(knowledge_grid == PERSON)
-    exits_found = np.sum(knowledge_grid == EXIT)
-    cells_explored = np.sum(knowledge_grid != UNKNOWN)
-    total_cells = knowledge_grid.shape[0] * knowledge_grid.shape[1]
-    
-    print(f"People found: {people_found}")
-    print(f"Exits found: {exits_found}")
-    print(f"Area explored: {cells_explored}/{total_cells} cells ({100*cells_explored/total_cells:.1f}%)")
-    
-    # Print the knowledge map
-    print("\nKnowledge Map:")
-    chars = {UNKNOWN: '?', EMPTY: '.', WALL: '#', LAVA: 'X', EXIT: 'E', PERSON: 'P'}
-    for y in range(knowledge_grid.shape[1]):
-        line = ""
-        for x in range(knowledge_grid.shape[0]):
-            line += chars[knowledge_grid[x, y]]
-        print(line)
-    
-    # Check if we can proceed to rescue
-    if people_found == 0:
-        print("\n[X] Cannot proceed to rescue: No person found!")
-        return env, knowledge_grid, False
-    
-    if exits_found == 0:
-        print("\n[X] Cannot proceed to rescue: No exit found!")
-        return env, knowledge_grid, False
-    
-    # 3. RESCUE PHASE - Navigate to person and bring them to exit
+        target_person = None
+        if len(known_people) > 0:
+            # Pick the first known person
+            target_person = known_people[0]
+            
+        # --- Step 2: Decide Mode ---
+        if target_person:
+            print(f"\n[MODE SWITCH] Person known at {target_person}. Switching to RESCUE mode.")
+            
+            # Initialize Rescue Agent with current knowledge (shared search_agent)
+            rescue_bot = RescueAgent(env, search_agent)
+            
+            # Execute rescue
+            success = rescue_bot.run_rescue(target_pos=target_person)
+            
+            if success:
+                print(f"[SUCCESS] Person at {target_person} rescued!")
+                # CRITICAL: Update map to reflect person is gone
+                search_agent.remove_person_from_memory(target_person)
+            else:
+                print(f"[FAILURE] Could not rescue person at {target_person}.")
+                # Mark as unreachable so we don't keep trying immediately
+                # For now, we'll just remove them from memory to avoid infinite loop
+                # In a real system, we'd mark as "unreachable" and try others
+                print("Removing unreachable person from memory to continue search.")
+                search_agent.remove_person_from_memory(target_person)
+                
+        else:
+            print("\n[MODE SWITCH] No people known. Switching to SEARCH mode.")
+            
+            # Run search step-by-step until something interesting happens
+            status = "CONTINUE"
+            while status == "CONTINUE" and step_count < max_steps:
+                env.render()
+                status = search_agent.search_until_new_discovery()
+                
+                # Update step count (approximate, search_until_new_discovery runs 1 step)
+                step_count += 1
+                
+                # Check for termination
+                if env.people_rescued >= TOTAL_PEOPLE:
+                    break
+            
+            if status == "EXPLORED_ALL":
+                print("Map fully explored. No more people found.")
+                break
+            elif status == "FOUND_NEW_PERSON":
+                print("New person discovered! Switching to rescue logic.")
+                
     print("\n" + "=" * 60)
-    print("PHASE 2: RESCUE")
+    print("MISSION END")
     print("=" * 60)
-    print("Objective: Retrieve person and evacuate to exit\n")
+    print(f"Total People Rescued: {env.people_rescued}/{TOTAL_PEOPLE}")
     
-    # Ensure person is not already being carried
-    if env.carrying is not None:
-        print("Dropping carried object before rescue phase...")
-        env.carrying = None
-    
-    # Initialize rescue agent with knowledge from search
-    rescue_agent = RescueAgent(env, knowledge_grid)
-    
-    # Run rescue operation
-    rescue_success = rescue_agent.run_rescue()
-    
-    # 4. Final Results
-    print("\n" + "=" * 60)
-    print("MISSION COMPLETE")
-    print("=" * 60)
-    
-    if rescue_success:
-        print("[SUCCESS] Person successfully rescued and evacuated!")
-        print(f"[SUCCESS] People rescued: {env.people_rescued}/{env.num_people}")
-    else:
-        print("[FAILURE] Rescue operation failed")
-        print(f"  People rescued: {env.people_rescued}/{env.num_people}")
-    
-    return env, knowledge_grid, rescue_success
+    return env, search_agent.knowledge_grid, env.people_rescued == TOTAL_PEOPLE
 
 
 def run_search_only_demo():
@@ -251,4 +217,4 @@ if __name__ == "__main__":
             print("Usage: python run_rescue.py [search|rescue|full]")
     else:
         # Default: run full integrated demo
-        env, knowledge_grid, success = run_integrated_search_and_rescue()
+        env, knowledge_grid, success = run_multi_person_mission()

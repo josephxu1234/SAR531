@@ -10,13 +10,14 @@ EXIT = 4
 PERSON = 5
 
 class RescueAgent:
-    def __init__(self, env, knowledge_grid):
+    def __init__(self, env, search_agent):
         """
         env: SAREnv environment
-        knowledge_grid: numpy array from SearchAgent
+        search_agent: SearchAgent instance (the map keeper)
         """
         self.env = env
-        self.knowledge_grid = knowledge_grid.copy()
+        self.search_agent = search_agent
+        self.knowledge_grid = search_agent.knowledge_grid # Direct reference
         
         # Directions: 0=Right, 1=Down, 2=Left, 3=Up
         self.DIR_TO_VEC = [
@@ -160,6 +161,8 @@ class RescueAgent:
         for action in turn_actions:
             obs, reward, term, trunc, info = self.env.step(action)
             self.env.render()
+            # Update map during turns
+            self.search_agent.update_map(obs, self.env.agent_pos, self.env.agent_dir)
 
         # Check what's in front before moving
         fwd_pos = self.env.front_pos
@@ -172,6 +175,9 @@ class RescueAgent:
         # Move forward
         obs, reward, term, trunc, info = self.env.step(self.env.actions.forward)
         self.env.render()
+        
+        # Update map after move
+        self.search_agent.update_map(obs, self.env.agent_pos, self.env.agent_dir)
         
         # Check if we actually moved
         actual_pos = tuple(self.env.agent_pos)
@@ -204,9 +210,12 @@ class RescueAgent:
             print(f"No person at {agent_pos} to pick up")
             return False
 
-    def run_rescue(self):
+    def run_rescue(self, target_pos=None):
         """Execute the full rescue operation."""
-        person_pos = self._find_person()
+        if target_pos is None:
+            person_pos = self._find_person()
+        else:
+            person_pos = target_pos
         
         if person_pos is None:
             print("Cannot run rescue: no person found in knowledge grid.")
@@ -415,7 +424,15 @@ def run_rescue_demo():
                     knowledge_grid[x, y] = EXIT
     
     # Create and run rescue agent
-    rescue_agent = RescueAgent(env, knowledge_grid)
+    # Note: In standalone demo, we mock the search agent
+    class MockSearchAgent:
+        def __init__(self, grid):
+            self.knowledge_grid = grid
+        def update_map(self, obs, pos, dir):
+            pass
+            
+    mock_search = MockSearchAgent(knowledge_grid)
+    rescue_agent = RescueAgent(env, mock_search)
     success = rescue_agent.run_rescue()
     
     if success:
