@@ -35,30 +35,31 @@ class SAREnv(RoomGrid):
         self.agent_start_dir = agent_start_dir
 
         self.people_rescued = 0  # Track number of people rescued
+        self.exit_positions = []  # Initialize here to avoid reset issues
 
         # Set default max_steps if not provided
         if max_steps is None:
             max_steps = 4 * (room_size * num_rows) * (room_size * num_cols)
 
-        mission_space = MissionSpace(mission_func=lambda: "Save the people")
-
-        # Calculate size with padding of 2 (1 on each side)
-        height = (room_size - 1) * num_rows + 1 + 2
-        width = (room_size - 1) * num_cols + 1 + 2
+        mission_space = MissionSpace(mission_func=self._gen_mission)
 
         self.room_size = room_size
         self.num_rows = num_rows
         self.num_cols = num_cols
 
-        # Initialize MiniGridEnv directly to bypass RoomGrid's size calculation
+        # Calculate size with padding of 2 (1 on each side)
+        height = (room_size - 1) * num_rows + 1 + 2
+        width = (room_size - 1) * num_cols + 1 + 2
+
+        # Initialize MiniGridEnv directly with specific parameters
         MiniGridEnv.__init__(
             self,
             mission_space=mission_space,
             width=width,
             height=height,
             max_steps=max_steps,
-            see_through_walls=False,
-            agent_view_size=agent_view_size,  # Partial observability
+            see_through_walls=False,  # Cannot see through walls
+            agent_view_size=agent_view_size,  # Limited field of view
             **kwargs,
         )
 
@@ -68,7 +69,6 @@ class SAREnv(RoomGrid):
 
     def room_from_pos(self, x: int, y: int) -> Room:
         """Get the room a given position maps to."""
-
         assert x >= 0
         assert y >= 0
 
@@ -176,14 +176,12 @@ class SAREnv(RoomGrid):
         # Get all available wall positions on the perimeter
         available_positions = []
 
-        # Top wall (inset by 1 due to outer wall)
-        # The building starts at y=1. The top wall of the building is at y=1.
+        # Top wall
         for x in range(2, width - 2):
             if self.grid.get(x, 1) is not None and self.grid.get(x, 1).type == "wall":
                 available_positions.append((x, 1))
 
         # Bottom wall
-        # The building ends at height-2. The bottom wall is at height-2.
         for x in range(2, width - 2):
             if (
                 self.grid.get(x, height - 2) is not None
@@ -192,13 +190,11 @@ class SAREnv(RoomGrid):
                 available_positions.append((x, height - 2))
 
         # Left wall
-        # The building starts at x=1. The left wall is at x=1.
         for y in range(2, height - 2):
             if self.grid.get(1, y) is not None and self.grid.get(1, y).type == "wall":
                 available_positions.append((1, y))
 
         # Right wall
-        # The building ends at width-2. The right wall is at width-2.
         for y in range(2, height - 2):
             if (
                 self.grid.get(width - 2, y) is not None
@@ -223,7 +219,29 @@ class SAREnv(RoomGrid):
         for i in range(self.num_people):
             person = Person(color="purple")
             # place_obj will find a random empty position
-            self.place_obj(person)
+            # Make sure we don't place on walls or perimeter
+            placed = False
+            attempts = 0
+            while not placed and attempts < 100:
+                try:
+                    self.place_obj(person, max_tries=100)
+                    # Verify placement is not on perimeter
+                    if person.cur_pos is not None:
+                        x, y = person.cur_pos
+                        # Check if on perimeter (should be at least 2 cells from edge)
+                        if x >= 2 and x < self.width - 2 and y >= 2 and y < self.height - 2:
+                            placed = True
+                        else:
+                            # Remove and try again
+                            self.grid.set(x, y, None)
+                            attempts += 1
+                    else:
+                        placed = True
+                except:
+                    attempts += 1
+            
+            if not placed:
+                print(f"Warning: Could not place person {i} away from perimeter")
 
     def _place_collapsed_floors(self) -> None:
         for i in range(self.num_collapsed_floors):
@@ -280,12 +298,15 @@ class SAREnv(RoomGrid):
     def step(self, action):
         """Override step to handle rescue mechanics and rewards."""
 
-        # Check if agent is carrying a person before taking action
+        # Store state before action
+        agent_pos_before = tuple(self.agent_pos)
         carrying_person_before = (
             self.carrying is not None and self.carrying.type == "ball"
         )
-
-        fwd_cell = self.grid.get(*self.front_pos)
+        
+        # Get forward cell before action
+        fwd_pos = self.front_pos
+        fwd_cell = self.grid.get(*fwd_pos)
 
         # Take the action
         obs, reward, terminated, truncated, info = super().step(action)
@@ -294,19 +315,21 @@ class SAREnv(RoomGrid):
         if self.people_rescued < self.num_people:
             terminated = False  # Override parent class termination
 
-        # Penalty for steppin on collapsed floor
+        # Penalty for stepping on collapsed floor (only on forward action)
         if action == self.actions.forward and fwd_cell is not None and fwd_cell.type == "lava":
             reward -= 100
             print('Stepped on collapsed floor! -100 penalty.')
-            terminated = True  # should we terminate here? or just penalize?
+            terminated = True
 
+        # Get current position after action
         agent_pos = tuple(self.agent_pos)
+        
+        # No auto-pickup - agent must use pickup action when adjacent to person
 
         # Check if agent is on an exit position while carrying a person
         rescue_successful = False
         if (
-            carrying_person_before
-            and self.carrying
+            self.carrying is not None
             and self.carrying.type == "ball"
             and agent_pos in self.exit_positions
         ):
@@ -322,10 +345,8 @@ class SAREnv(RoomGrid):
 
             # Check if all people are rescued
             if self.people_rescued >= self.num_people:
-                terminated = True  # All people rescued, can safely terminate
-                reward += (
-                    50  # Bonus for completing mission # TODO: should we keep this?
-                )
+                terminated = True
+                reward += 50  # Bonus for completing mission
                 info["success"] = True
                 info["message"] = f"All {self.num_people} people rescued!"
                 print("Mission Complete: All people rescued!")
@@ -344,7 +365,7 @@ class SAREnv(RoomGrid):
         reward -= 0.1
 
         # Add info about current state
-        info["people_rescued"] = getattr(self, "people_rescued", 0)
+        info["people_rescued"] = self.people_rescued
         info["carrying_person"] = (
             self.carrying is not None and self.carrying.type == "ball"
         )
@@ -354,6 +375,5 @@ class SAREnv(RoomGrid):
     def reset(self, **kwargs):
         """Reset environment and rescue tracking."""
         self.people_rescued = 0
-        # Don't reset exit_positions here
         obs, info = super().reset(**kwargs)
         return obs, info
