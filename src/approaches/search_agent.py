@@ -5,17 +5,28 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import numpy as np
-from minigrid.core.constants import OBJECT_TO_IDX
+from minigrid.core.constants import OBJECT_TO_IDX, COLOR_TO_IDX
 from SAREnv import SAREnv
 from collections import deque
 
-# Map States
+# Map States - expanded to include floor colors and doors
 UNKNOWN = 0
 EMPTY = 1
 WALL = 2
 LAVA = 3
 EXIT = 4
 PERSON = 5
+DOOR = 6
+# Floor colors (7-12)
+FLOOR_RED = 7
+FLOOR_GREEN = 8
+FLOOR_BLUE = 9
+FLOOR_PURPLE = 10
+FLOOR_YELLOW = 11
+FLOOR_GREY = 12
+
+# Helper: which states are walkable for pathfinding
+WALKABLE_STATES = {EMPTY, EXIT, PERSON, DOOR, FLOOR_RED, FLOOR_GREEN, FLOOR_BLUE, FLOOR_PURPLE, FLOOR_YELLOW, FLOOR_GREY}
 
 class SearchAgent:
     def __init__(self, env: SAREnv):
@@ -58,7 +69,7 @@ class SearchAgent:
         Updates the frontier set for (x, y) and its neighbors.
         """
         # If it's walkable and has unknown neighbors, it's a frontier
-        is_walkable = self.knowledge_grid[x, y] in [EMPTY, EXIT]
+        is_walkable = self.knowledge_grid[x, y] in WALKABLE_STATES
         if is_walkable and self._has_unknown_neighbor(x, y):
             self.frontiers.add((x, y))
         else:
@@ -129,7 +140,24 @@ class SearchAgent:
                 elif obj_type_idx == OBJECT_TO_IDX['goal']:
                     new_state = EXIT
                 elif obj_type_idx == OBJECT_TO_IDX['door']:
-                    new_state = EMPTY  # Open doors are walkable
+                    new_state = DOOR  # Track doors as separate state
+                elif obj_type_idx == OBJECT_TO_IDX['floor']:
+                    # Map floor color to specific floor state
+                    color_idx = view[view_x, view_y, 1]
+                    if color_idx == COLOR_TO_IDX['red']:
+                        new_state = FLOOR_RED
+                    elif color_idx == COLOR_TO_IDX['green']:
+                        new_state = FLOOR_GREEN
+                    elif color_idx == COLOR_TO_IDX['blue']:
+                        new_state = FLOOR_BLUE
+                    elif color_idx == COLOR_TO_IDX['purple']:
+                        new_state = FLOOR_PURPLE
+                    elif color_idx == COLOR_TO_IDX['yellow']:
+                        new_state = FLOOR_YELLOW
+                    elif color_idx == COLOR_TO_IDX['grey']:
+                        new_state = FLOOR_GREY
+                    else:
+                        new_state = EMPTY  # Fallback for unknown floor color
                 elif obj_type_idx == 1:  # Empty cell
                     new_state = EMPTY
                 elif obj_type_idx == 0:  # Unseen (shouldn't happen in view)
@@ -176,7 +204,7 @@ class SearchAgent:
                 
                 if 0 <= nx < self.width and 0 <= ny < self.height:
                     cell_type = self.knowledge_grid[nx, ny]
-                    is_walkable = cell_type in [EMPTY, EXIT, PERSON]
+                    is_walkable = cell_type in WALKABLE_STATES or cell_type == PERSON
                     
                     if is_walkable and (nx, ny) not in came_from:
                         came_from[(nx, ny)] = curr
@@ -374,11 +402,14 @@ if __name__ == "__main__":
     final_map, env = run_search_demo()
     
     print("\nFinal Internal Map:")
-    chars = {UNKNOWN: '?', EMPTY: '.', WALL: '#', LAVA: 'X', EXIT: 'E', PERSON: 'P'}
+    chars = {
+        UNKNOWN: '?', EMPTY: '.', WALL: '#', LAVA: 'X', EXIT: 'E', PERSON: 'P', DOOR: 'D',
+        FLOOR_RED: 'r', FLOOR_GREEN: 'g', FLOOR_BLUE: 'b', FLOOR_PURPLE: 'p', FLOOR_YELLOW: 'y', FLOOR_GREY: 'G'
+    }
     for y in range(final_map.shape[1]):
         line = ""
         for x in range(final_map.shape[0]):
-            line += chars[final_map[x, y]]
+            line += chars.get(final_map[x, y], '?')
         print(line)
 
     print("\nMap Statistics:")

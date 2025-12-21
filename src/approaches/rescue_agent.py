@@ -8,6 +8,17 @@ WALL = 2
 LAVA = 3
 EXIT = 4
 PERSON = 5
+DOOR = 6
+# Floor colors (7-12)
+FLOOR_RED = 7
+FLOOR_GREEN = 8
+FLOOR_BLUE = 9
+FLOOR_PURPLE = 10
+FLOOR_YELLOW = 11
+FLOOR_GREY = 12
+
+# Helper: which states are walkable for pathfinding
+WALKABLE_STATES = {EMPTY, EXIT, PERSON, DOOR, FLOOR_RED, FLOOR_GREEN, FLOOR_BLUE, FLOOR_PURPLE, FLOOR_YELLOW, FLOOR_GREY}
 
 class RescueAgent:
     def __init__(self, env, search_agent):
@@ -54,7 +65,7 @@ class RescueAgent:
         """Check if cell is walkable."""
         if not (0 <= x < self.env.width and 0 <= y < self.env.height):
             return False
-        return self.knowledge_grid[x, y] in [EMPTY, EXIT, PERSON]
+        return self.knowledge_grid[x, y] in WALKABLE_STATES or self.knowledge_grid[x, y] == PERSON
 
     def _astar(self, start, goal):
         """A* pathfinding from start to goal with turn cost."""
@@ -316,13 +327,17 @@ class RescueAgent:
             # Face the person
             turn_actions = self._get_action_to_face(self.env.agent_dir, person_dir)
             for action in turn_actions:
-                self.env.step(action)
+                obs, reward, term, trunc, info = self.env.step(action)
                 self.env.render()
+                # Update map after turning to ensure knowledge grid stays in sync
+                self.search_agent.update_map(obs, self.env.agent_pos, self.env.agent_dir)
             
             # Use pickup action
             print("Using pickup action...")
             obs, reward, term, trunc, info = self.env.step(self.env.actions.pickup)
             self.env.render()
+            # CRITICAL: Update map after pickup to remove person from knowledge grid
+            self.search_agent.update_map(obs, self.env.agent_pos, self.env.agent_dir)
         
         if self.env.carrying is None or self.env.carrying.type != "ball":
             print("ERROR: Failed to pick up person!")

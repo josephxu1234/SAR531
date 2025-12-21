@@ -6,6 +6,29 @@ from minigrid.core.world_object import WorldObj
 from minigrid.utils.rendering import fill_coords, point_in_circle, point_in_rect
 
 
+class Floor(WorldObj):
+    """A colored floor tile to indicate room zones."""
+
+    def __init__(self, color: str = "grey"):
+        super().__init__("floor", color)
+
+    def can_overlap(self):
+        return True
+
+    def can_pickup(self):
+        return False
+
+    def see_behind(self):
+        return True
+
+    def render(self, img):
+        # Fill the entire tile with the floor color (lighter shade)
+        c = COLORS[self.color]
+        # Use a lighter/desaturated version for the floor
+        floor_color = tuple(int(0.3 * x + 0.7 * 255) for x in c)
+        fill_coords(img, point_in_rect(0.031, 1, 0.031, 1), floor_color)
+
+
 class Person(WorldObj):
     """A person that needs to be rescued."""
 
