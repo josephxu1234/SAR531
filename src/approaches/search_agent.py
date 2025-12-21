@@ -359,13 +359,13 @@ class SearchAgent:
         
         if desired_dir == agent_dir:
             action = self.env.actions.forward
-            print("Moving forward to", next_cell)
+            #print("Moving forward to", next_cell)
         elif (desired_dir - agent_dir) % 4 == 1:
             action = self.env.actions.right
-            print("Turning right towards", next_cell)
+            #print("Turning right towards", next_cell)
         else:
             action = self.env.actions.left
-            print("Turning left towards", next_cell)
+            #print("Turning left towards", next_cell)
             
         self.last_action = action
 
