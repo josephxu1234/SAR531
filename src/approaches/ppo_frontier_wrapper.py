@@ -173,10 +173,9 @@ class FrontierSelectionEnv(gym.Env):
         next_cell = path[1]
         obs, reward, terminated, truncated, info = self._step_toward_cell(next_cell)
         total_reward += reward
-        self.search_agent.update_map(obs, self.env.agent_pos, self.env.agent_dir)
         self._prune_missing_people()
 
-        return self._build_obs(), total_reward, terminated, truncated, info
+        return obs, total_reward, terminated, truncated, info
 
     def render(self):  # pragma: no cover - passthrough
         return self.env.render()
@@ -266,7 +265,6 @@ class FrontierSelectionEnv(gym.Env):
             obs, reward, terminated, truncated, step_info = self._step_toward_cell(next_cell)
             total_reward += reward
             info.update(step_info)
-            self.search_agent.update_map(obs, self.env.agent_pos, self.env.agent_dir)
 
             if terminated or truncated:
                 return total_reward, terminated, truncated, info, obs
@@ -361,36 +359,40 @@ class FrontierSelectionEnv(gym.Env):
         return self._turn_action(desired_dir)
 
     def _step_toward_cell(self, next_cell: Tuple[int, int]):
-        """Turn as needed, open doors if closed, then step forward."""
+        """Turn as needed, open doors if closed, then step forward; returns wrapped obs."""
         desired_dir = self._direction_to(next_cell)
 
         # Turn until facing desired_dir
         while desired_dir != self.env.agent_dir:
             turn_action = self._turn_action(desired_dir)
-            obs, reward, terminated, truncated, info = self.env.step(turn_action)
+            obs_raw, reward, terminated, truncated, info = self.env.step(turn_action)
+            self.search_agent.update_map(obs_raw, self.env.agent_pos, self.env.agent_dir)
             if terminated or truncated:
-                return obs, reward, terminated, truncated, info
+                return self._build_obs(), reward, terminated, truncated, info
             desired_dir = self._direction_to(next_cell)
 
         # If door ahead and closed, toggle to open
         cell_obj = self.env.grid.get(*next_cell)
         if cell_obj is not None and getattr(cell_obj, "type", None) == "door":
             if not getattr(cell_obj, "is_open", True):
-                obs, reward, terminated, truncated, info = self.env.step(self.env.actions.toggle)
+                obs_raw, reward, terminated, truncated, info = self.env.step(self.env.actions.toggle)
+                self.search_agent.update_map(obs_raw, self.env.agent_pos, self.env.agent_dir)
                 if terminated or truncated:
-                    return obs, reward, terminated, truncated, info
+                    return self._build_obs(), reward, terminated, truncated, info
                 # Refresh desired_dir in case orientation changed (it shouldn't)
                 desired_dir = self._direction_to(next_cell)
                 if desired_dir != self.env.agent_dir:
                     turn_action = self._turn_action(desired_dir)
-                    obs, add_r, terminated, truncated, info = self.env.step(turn_action)
+                    obs_raw, add_r, terminated, truncated, info = self.env.step(turn_action)
                     reward += add_r
+                    self.search_agent.update_map(obs_raw, self.env.agent_pos, self.env.agent_dir)
                     if terminated or truncated:
-                        return obs, reward, terminated, truncated, info
+                        return self._build_obs(), reward, terminated, truncated, info
 
         # Move forward
-        obs, reward, terminated, truncated, info = self.env.step(self.env.actions.forward)
-        return obs, reward, terminated, truncated, info
+        obs_raw, reward, terminated, truncated, info = self.env.step(self.env.actions.forward)
+        self.search_agent.update_map(obs_raw, self.env.agent_pos, self.env.agent_dir)
+        return self._build_obs(), reward, terminated, truncated, info
 
     def _direction_to(self, target: Tuple[int, int]) -> int:
         curr = tuple(self.env.agent_pos)
