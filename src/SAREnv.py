@@ -10,33 +10,10 @@ from minigrid.core.world_object import Door, Goal, Key, Lava, Wall
 from minigrid.manual_control import ManualControl
 from minigrid.minigrid_env import MiniGridEnv
 
-from sar_objects import Exit, Person, Floor
+from sar_objects import Exit, Person
 
 
 class SAREnv(RoomGrid):
-    # Define room zone types with weighted probabilities
-    ZONE_TYPES = {
-        'medical': {
-            'color': 'green',
-            'person_weight': 3.0,  # 3x more likely to have people
-            'lava_weight': 0.2     # 5x less likely to have lava
-        },
-        'industrial': {
-            'color': 'red',
-            'person_weight': 0.2,  # 5x less likely to have people
-            'lava_weight': 3.0     # 3x more likely to have lava
-        },
-        'common': {
-            'color': 'blue',
-            'person_weight': 1.0,  # Baseline probability
-            'lava_weight': 1.0     # Baseline probability
-        },
-        'storage': {
-            'color': 'grey',
-            'person_weight': 0.5,  # Less likely to have people
-            'lava_weight': 0.5     # Less likely to have lava
-        }
-    }
     def __init__(
         self,
         room_size: int = 7,
@@ -171,21 +148,6 @@ class SAREnv(RoomGrid):
         # Initialize exit positions list
         self.exit_positions = []
 
-        # Assign zone types to rooms and place colored floor tiles
-        for j in range(self.num_rows):
-            for i in range(self.num_cols):
-                room = self.room_grid[j][i]
-                
-                # Randomly assign a zone type
-                zone_type = self._rand_elem(list(self.ZONE_TYPES.keys()))
-                room.zone_type = zone_type
-                room.zone_color = self.ZONE_TYPES[zone_type]['color']
-                
-                # Place colored floor tiles in the room
-                for x in range(room.top[0] + 1, room.top[0] + room.size[0] - 1):
-                    for y in range(room.top[1] + 1, room.top[1] + room.size[1] - 1):
-                        self.grid.set(x, y, Floor(room.zone_color))
-
         # Connect all rooms with doors
         added_doors = self.connect_all()
 
@@ -253,85 +215,39 @@ class SAREnv(RoomGrid):
             available_positions.pop(pos_idx)
 
     def _place_people(self) -> None:
-        """Place people weighted by zone type."""
+        """Place people in random free spots inside the building."""
         for i in range(self.num_people):
-            # Collect rooms and their weights
-            rooms = []
-            weights = []
-            for row in self.room_grid:
-                for room in row:
-                    rooms.append(room)
-                    weights.append(self.ZONE_TYPES[room.zone_type]['person_weight'])
+            person = Person(color="purple")
+            # place_obj will find a random empty position
+            # Make sure we don't place on walls or perimeter
+            placed = False
+            attempts = 0
+            while not placed and attempts < 100:
+                try:
+                    self.place_obj(person, max_tries=100)
+                    # Verify placement is not on perimeter
+                    if person.cur_pos is not None:
+                        x, y = person.cur_pos
+                        # Check if on perimeter (should be at least 2 cells from edge)
+                        if x >= 2 and x < self.width - 2 and y >= 2 and y < self.height - 2:
+                            placed = True
+                        else:
+                            # Remove and try again
+                            self.grid.set(x, y, None)
+                            attempts += 1
+                    else:
+                        placed = True
+                except:
+                    attempts += 1
             
-            # Normalize weights to probabilities
-            total_weight = sum(weights)
-            probabilities = [w / total_weight for w in weights]
-            
-            # Weighted random selection
-            selected_idx = self.np_random.choice(len(rooms), p=probabilities)
-            selected_room = rooms[selected_idx]
-            
-            # Find available positions in the selected room (cells with Floor objects)
-            top_x, top_y = selected_room.top[0] + 1, selected_room.top[1] + 1
-            size_x, size_y = selected_room.size[0] - 2, selected_room.size[1] - 2
-            
-            available_positions = []
-            for x in range(top_x, top_x + size_x):
-                for y in range(top_y, top_y + size_y):
-                    cell = self.grid.get(x, y)
-                    # Can place person if cell has Floor (which can_overlap) or is None
-                    if cell is None or (hasattr(cell, 'type') and cell.type == 'floor'):
-                        available_positions.append((x, y))
-            
-            if available_positions:
-                # Randomly select a position
-                pos_idx = self._rand_int(0, len(available_positions))
-                x, y = available_positions[pos_idx]
-                # Place the person directly on the grid
-                self.grid.set(x, y, Person(color="purple"))
-            else:
-                print(f"Warning: Could not place person {i} in selected room")
+            if not placed:
+                print(f"Warning: Could not place person {i} away from perimeter")
 
     def _place_collapsed_floors(self) -> None:
-        """Place lava weighted by zone type."""
         for i in range(self.num_collapsed_floors):
-            # Collect rooms and their weights
-            rooms = []
-            weights = []
-            for row in self.room_grid:
-                for room in row:
-                    rooms.append(room)
-                    weights.append(self.ZONE_TYPES[room.zone_type]['lava_weight'])
-            
-            # Normalize weights to probabilities
-            total_weight = sum(weights)
-            probabilities = [w / total_weight for w in weights]
-            
-            # Weighted random selection
-            selected_idx = self.np_random.choice(len(rooms), p=probabilities)
-            selected_room = rooms[selected_idx]
-            
-            # Find available positions in the selected room (cells with Floor objects)
-            top_x, top_y = selected_room.top[0] + 1, selected_room.top[1] + 1
-            size_x, size_y = selected_room.size[0] - 2, selected_room.size[1] - 2
-            
-            available_positions = []
-            for x in range(top_x, top_x + size_x):
-                for y in range(top_y, top_y + size_y):
-                    cell = self.grid.get(x, y)
-                    # Can place lava if cell has Floor (which can_overlap) or is None
-                    # Also ensure we don't place on top of people
-                    if cell is None or (hasattr(cell, 'type') and cell.type == 'floor'):
-                        available_positions.append((x, y))
-            
-            if available_positions:
-                # Randomly select a position
-                pos_idx = self._rand_int(0, len(available_positions))
-                x, y = available_positions[pos_idx]
-                # Place the lava directly on the grid
-                self.grid.set(x, y, Lava())
-            else:
-                print(f"Warning: Could not place lava {i} in selected room")
+            collapsed_floor = Lava()
+            # place_obj will find a random empty position
+            self.place_obj(collapsed_floor)
 
     def _set_agent_start(self) -> None:
         """Set agent starting position."""
