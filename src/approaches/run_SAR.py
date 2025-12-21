@@ -12,15 +12,15 @@ def run_multi_person_mission():
     print("MULTI-PERSON SEARCH AND RESCUE MISSION")
     print("=" * 60)
     
-    TOTAL_PEOPLE = 3
+    TOTAL_PEOPLE = 5
     
     env = SAREnv(
-        room_size=5,
-        num_rows=3,
-        num_cols=3,
+        room_size=8,
+        num_rows=4,
+        num_cols=4,
         num_people=TOTAL_PEOPLE,
-        num_exits=2,
-        num_collapsed_floors=5,
+        num_exits=3,
+        num_collapsed_floors=20,
         agent_view_size=3,
         render_mode="human"
     )
