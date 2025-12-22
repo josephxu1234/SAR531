@@ -433,7 +433,7 @@ class SAREnv(RoomGrid):
                 reward += 50  # Bonus for completing mission
                 info["success"] = True
                 info["message"] = f"All {self.num_people} people rescued!"
-                print("Mission Complete: All people rescued!")
+                # print("Mission Complete: All people rescued!")
             else:
                 # Continue mission - more people to rescue
                 terminated = False
@@ -441,9 +441,9 @@ class SAREnv(RoomGrid):
                 info["message"] = (
                     f"Person rescued! {self.people_rescued}/{self.num_people} complete"
                 )
-                print(
-                    "Person rescued! {}/{}".format(self.people_rescued, self.num_people)
-                )
+                # print(
+                #     "Person rescued! {}/{}".format(self.people_rescued, self.num_people)
+                # )
 
         # Small penalty for each step
         reward -= 0.1
