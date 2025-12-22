@@ -1,6 +1,5 @@
 """
-Comparison script that compares Baseline SearchAgent vs PPO Frontier Selection Agent.
-
+Comparison script for Baseline vs PPO agents
 This script:
 - Runs both agents (Baseline and PPO) on the same set of environments
 - Collects metrics (rewards, steps, success rate, people rescued)
@@ -12,12 +11,9 @@ This script:
 import argparse
 import json
 import numpy as np
-import matplotlib.pyplot as plt
-from typing import Dict, List
-from dataclasses import dataclass, asdict
-from datetime import datetime
 import os
 import sys
+import matplotlib.pyplot as plt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from stable_baselines3 import PPO
@@ -25,36 +21,29 @@ from SAREnv import SAREnv
 from ppo_frontier_wrapper import FrontierSelectionEnv
 from search_agent import SearchAgent
 from rescue_agent import RescueAgent
+from dataclasses import dataclass, asdict
+from typing import Dict, List
+from datetime import datetime
 
 
 @dataclass
 class EpisodeResult:
-    """Container for single episode results."""
+    """Episode results with frontier selection tracking."""
     episode_id: int
-    agent_type: str  # "baseline" or "ppo"
+    agent_type: str
     total_reward: float
     episode_length: int
     people_rescued: int
     success: bool
-    lava_hits: int
     seed: int
-    nearest_frontier_picks: int = 0  # Only for PPO
-    total_frontier_picks: int = 0     # Only for PPO
-
-
-def _adjacent_walkable(rescue_agent, pos):
-    """Helper to find adjacent walkable cells."""
-    adj = []
-    for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-        nx, ny = pos[0] + dx, pos[1] + dy
-        if 0 <= nx < rescue_agent.env.width and 0 <= ny < rescue_agent.env.height:
-            if rescue_agent._is_safe(nx, ny):
-                adj.append((nx, ny))
-    return adj
+    # PPO-specific
+    valid_picks: int = 0
+    valid_nearest_picks: int = 0
+    fallback_picks: int = 0
 
 
 def _action_toward(env, next_pos):
-    """Helper to get action toward next position."""
+    """Helper to determine action toward next position."""
     curr = tuple(env.agent_pos)
     dx = next_pos[0] - curr[0]
     dy = next_pos[1] - curr[1]
@@ -72,57 +61,51 @@ def _action_toward(env, next_pos):
     if desired_dir == env.agent_dir:
         return env.actions.forward
     
-    # Turn toward desired direction
     diff = (desired_dir - env.agent_dir) % 4
-    if diff == 1:
-        return env.actions.right
-    return env.actions.left
+    return env.actions.right if diff == 1 else env.actions.left
+
+
+def _adjacent_walkable(rescue_agent, pos):
+    """Helper to find adjacent walkable cells."""
+    adj = []
+    for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+        nx, ny = pos[0] + dx, pos[1] + dy
+        if 0 <= nx < rescue_agent.env.width and 0 <= ny < rescue_agent.env.height:
+            if rescue_agent._is_safe(nx, ny):
+                adj.append((nx, ny))
+    return adj
 
 
 def run_baseline_episode(env_config: Dict, seed: int, episode_id: int, 
-                        max_steps: int = 2000, verbose: bool = False) -> EpisodeResult:
-    """
-    Run one episode with baseline search+rescue agent.
-    Uses greedy nearest-frontier selection during search.
-    """
+                        max_steps: int = 2000) -> EpisodeResult:
+    """Run baseline greedy agent with search and rescue."""
     env = SAREnv(**env_config, render_mode=None)
     obs, _ = env.reset(seed=seed)
     
     search_agent = SearchAgent(env)
     search_agent.update_map(obs, env.agent_pos, env.agent_dir)
-    
     rescue_agent = RescueAgent(env, search_agent)
     
-    mode = "search"  # "search" or "rescue"
     total_reward = 0.0
     episode_length = 0
-    lava_hits = 0
-    terminated = False
-    truncated = False
+    mode = "search"
     
-    for step in range(max_steps):
-        # Check if mission complete
+    for _ in range(max_steps):
         if env.people_rescued >= env.num_people:
-            terminated = True
             break
         
-        # Decide mode based on knowledge
+        # Check for known people
         known_people = search_agent.get_known_people_locations()
         
         if known_people and mode == "search":
-            # Found a person, switch to rescue
             mode = "rescue"
-            if verbose:
-                print(f"  Step {step}: Switching to RESCUE mode")
         
         # Get action based on mode
         if mode == "rescue" and known_people:
-            # Run one step of rescue toward first known person
             person_pos = known_people[0]
             
-            # Check if we're carrying someone
+            # If carrying, go to exit
             if env.carrying is not None and env.carrying.type == "ball":
-                # Navigate to exit
                 exit_pos = rescue_agent._find_nearest_exit(tuple(env.agent_pos))
                 if exit_pos:
                     path = rescue_agent._astar(tuple(env.agent_pos), exit_pos)
@@ -134,28 +117,27 @@ def run_baseline_episode(env_config: Dict, seed: int, episode_id: int,
                     mode = "search"
                     continue
             else:
-                # Check if adjacent to person for pickup
+                # Navigate to person and pickup
                 dx = abs(person_pos[0] - env.agent_pos[0])
                 dy = abs(person_pos[1] - env.agent_pos[1])
                 
                 if dx + dy == 1:
-                    # Adjacent - pickup
-                    # Face the person
+                    # Adjacent - face and pickup
                     dx_dir = person_pos[0] - env.agent_pos[0]
                     dy_dir = person_pos[1] - env.agent_pos[1]
                     
-                    person_dir = -1
+                    desired_dir = -1
                     if dx_dir == 1:
-                        person_dir = 0
+                        desired_dir = 0
                     elif dy_dir == 1:
-                        person_dir = 1
+                        desired_dir = 1
                     elif dx_dir == -1:
-                        person_dir = 2
+                        desired_dir = 2
                     elif dy_dir == -1:
-                        person_dir = 3
+                        desired_dir = 3
                     
-                    if person_dir != -1 and person_dir != env.agent_dir:
-                        diff = (person_dir - env.agent_dir) % 4
+                    if desired_dir != -1 and desired_dir != env.agent_dir:
+                        diff = (desired_dir - env.agent_dir) % 4
                         action = env.actions.right if diff == 1 else env.actions.left
                     else:
                         action = env.actions.pickup
@@ -175,32 +157,23 @@ def run_baseline_episode(env_config: Dict, seed: int, episode_id: int,
                         mode = "search"
                         continue
         else:
-            # Search mode - use search agent
+            # Search mode
             mode = "search"
             action = search_agent.get_action(env.agent_pos, env.agent_dir)
-            
             if action is None:
-                # Search exhausted
                 break
         
-        # Execute action
-        obs, reward, terminated, truncated, info = env.step(action)
+        obs, reward, terminated, truncated, _ = env.step(action)
         search_agent.update_map(obs, env.agent_pos, env.agent_dir)
         
         total_reward += reward
         episode_length += 1
         
-        if reward <= -50:
-            lava_hits += 1
-        
         if terminated or truncated:
             break
-        
-        if verbose and episode_length % 100 == 0:
-            print(f"  Step {episode_length}: mode={mode}, reward={total_reward:.1f}, rescued={env.people_rescued}")
     
     success = env.people_rescued >= env.num_people
-    
+    people_rescued = env.people_rescued
     env.close()
     
     return EpisodeResult(
@@ -208,78 +181,77 @@ def run_baseline_episode(env_config: Dict, seed: int, episode_id: int,
         agent_type="baseline",
         total_reward=total_reward,
         episode_length=episode_length,
-        people_rescued=env.people_rescued,
+        people_rescued=people_rescued,
         success=success,
-        lava_hits=lava_hits,
         seed=seed
     )
 
 
 def run_ppo_episode(ppo_model, env_config: Dict, seed: int, episode_id: int,
                    max_steps: int = 2000, verbose: bool = False) -> EpisodeResult:
-    """Run one episode with PPO agent, tracking frontier selection patterns."""
+    """Run PPO agent with frontier tracking."""
     base_env = SAREnv(**env_config, render_mode=None)
     env = FrontierSelectionEnv(base_env, frontier_limit=64)
     obs, _ = env.reset(seed=seed)
     
     total_reward = 0.0
     episode_length = 0
-    lava_hits = 0
-    terminated = False
-    truncated = False
-    nearest_frontier_picks = 0
-    total_frontier_picks = 0
+    valid_picks = 0
+    valid_nearest_picks = 0
+    fallback_picks = 0
     
-    # Anti-stall: track if making progress
-    last_rescued_count = 0
+    last_rescued = 0
     steps_since_rescue = 0
-    max_steps_without_progress = 500
     
     for step in range(max_steps):
-        # Get PPO action
         action, _ = ppo_model.predict(obs, deterministic=True)
         action = int(action)
         
-        # Check if this was the nearest frontier
+        # Track frontier selection
         frontiers = obs['frontiers']
-        valid_mask = frontiers[:, 0] >= 0
+        num_valid = int(np.sum(frontiers[:, 0] >= 0))
         
-        if np.any(valid_mask):
-            total_frontier_picks += 1
-            # Frontier 0 is always nearest (sorted by distance in wrapper)
-            if action == 0:
-                nearest_frontier_picks += 1
+        if num_valid > 0:
+            is_valid = action < num_valid
+            
+            if is_valid:
+                valid_picks += 1
+                if action == 0:  # Nearest frontier
+                    valid_nearest_picks += 1
+            else:
+                fallback_picks += 1
+            
+            if verbose and (valid_picks + fallback_picks) <= 5:
+                print(f"  Pick: action={action}, valid_frontiers={num_valid}, "
+                      f"is_valid={is_valid}, nearest={action==0}")
         
-        obs, reward, terminated, truncated, info = env.step(action)
+        obs, reward, terminated, truncated, _ = env.step(action)
         
         total_reward += reward
         episode_length += 1
         
-        if reward <= -50:
-            lava_hits += 1
-        
-        # Check for progress
-        current_rescued = base_env.people_rescued
-        if current_rescued > last_rescued_count:
-            last_rescued_count = current_rescued
+        # Timeout if stuck
+        if base_env.people_rescued > last_rescued:
+            last_rescued = base_env.people_rescued
             steps_since_rescue = 0
         else:
             steps_since_rescue += 1
         
-        # Force termination if stuck
-        if steps_since_rescue > max_steps_without_progress:
-            if verbose:
-                print(f"  TIMEOUT: No progress for {max_steps_without_progress} steps")
+        if steps_since_rescue > 500:
             truncated = True
         
         if terminated or truncated:
             break
-        
-        if verbose and episode_length % 100 == 0:
-            rescued = base_env.people_rescued
-            print(f"  Step {episode_length}: reward={total_reward:.1f}, rescued={rescued}")
     
     success = base_env.people_rescued >= base_env.num_people
+    people_rescued = base_env.people_rescued
+    
+    if verbose:
+        total = valid_picks + fallback_picks
+        if total > 0:
+            print(f"  Summary: Valid={valid_picks}/{total} ({100*valid_picks/total:.1f}%), "
+                  f"Valid_Nearest={valid_nearest_picks}/{valid_picks if valid_picks else 1} "
+                  f"({100*valid_nearest_picks/max(1,valid_picks):.1f}%)")
     
     env.close()
     
@@ -288,198 +260,108 @@ def run_ppo_episode(ppo_model, env_config: Dict, seed: int, episode_id: int,
         agent_type="ppo",
         total_reward=total_reward,
         episode_length=episode_length,
-        people_rescued=base_env.people_rescued,
+        people_rescued=people_rescued,
         success=success,
-        lava_hits=lava_hits,
         seed=seed,
-        nearest_frontier_picks=nearest_frontier_picks,
-        total_frontier_picks=total_frontier_picks
+        valid_picks=valid_picks,
+        valid_nearest_picks=valid_nearest_picks,
+        fallback_picks=fallback_picks
     )
 
 
-def compute_statistics(results: List[EpisodeResult]) -> Dict:
-    """Compute statistical summary."""
-    baseline_results = [r for r in results if r.agent_type == "baseline"]
-    ppo_results = [r for r in results if r.agent_type == "ppo"]
+def compute_metrics(results: List[EpisodeResult]) -> Dict:
+    """Compute metrics for agents."""
+    baseline = [r for r in results if r.agent_type == "baseline"]
+    ppo = [r for r in results if r.agent_type == "ppo"]
     
-    def stats_for_group(group: List[EpisodeResult]) -> Dict:
+    def metrics(group):
         if not group:
             return {}
-        
-        rewards = [r.total_reward for r in group]
-        lengths = [r.episode_length for r in group]
-        rescued = [r.people_rescued for r in group]
-        successes = [r.success for r in group]
-        lava_hits = [r.lava_hits for r in group]
-        
-        stats = {
+        return {
             'count': len(group),
-            'reward_mean': float(np.mean(rewards)),
-            'reward_std': float(np.std(rewards)),
-            'reward_min': float(np.min(rewards)),
-            'reward_max': float(np.max(rewards)),
-            'length_mean': float(np.mean(lengths)),
-            'length_std': float(np.std(lengths)),
-            'rescued_mean': float(np.mean(rescued)),
-            'rescued_std': float(np.std(rescued)),
-            'success_rate': float(np.mean(successes) * 100),
-            'lava_hits_mean': float(np.mean(lava_hits)),
+            'reward_mean': float(np.mean([r.total_reward for r in group])),
+            'reward_std': float(np.std([r.total_reward for r in group])),
+            'length_mean': float(np.mean([r.episode_length for r in group])),
+            'length_std': float(np.std([r.episode_length for r in group])),
+            'rescued_mean': float(np.mean([r.people_rescued for r in group])),
+            'success_rate': float(np.mean([r.success for r in group]) * 100),
         }
-        
-        # PPO-specific stats
-        if group and group[0].agent_type == "ppo":
-            nearest_picks = sum(r.nearest_frontier_picks for r in group)
-            total_picks = sum(r.total_frontier_picks for r in group)
-            if total_picks > 0:
-                stats['nearest_frontier_percentage'] = float(nearest_picks / total_picks * 100)
-            else:
-                stats['nearest_frontier_percentage'] = 0.0
-        
-        return stats
     
-    return {
-        'baseline': stats_for_group(baseline_results),
-        'ppo': stats_for_group(ppo_results)
+    result = {
+        'baseline': metrics(baseline),
+        'ppo': metrics(ppo)
     }
+    
+    # Add PPO frontier analysis
+    if ppo:
+        total_valid = sum(r.valid_picks for r in ppo)
+        total_nearest = sum(r.valid_nearest_picks for r in ppo)
+        total_fallback = sum(r.fallback_picks for r in ppo)
+        
+        result['ppo']['valid_picks'] = total_valid
+        result['ppo']['valid_nearest_picks'] = total_nearest
+        result['ppo']['fallback_picks'] = total_fallback
+        if total_valid > 0:
+            result['ppo']['nearest_percentage'] = float(100 * total_nearest / total_valid)
+    
+    return result
 
 
-def print_statistics(stats: Dict):
-    """Print formatted statistics."""
+def print_metrics(metrics: Dict):
+    """Print formatted metrics after calcuation."""
     print("\n" + "="*70)
-    print("STATISTICAL SUMMARY")
+    print("EVALUATION RESULTS")
     print("="*70)
     
-    if stats.get('baseline'):
+    if metrics.get('baseline'):
+        b = metrics['baseline']
         print("\nBASELINE AGENT:")
-        b = stats['baseline']
         print(f"  Episodes: {b['count']}")
-        print(f"  Reward: {b['reward_mean']:.2f} ± {b['reward_std']:.2f}")
+        print(f"  Reward: {b['reward_mean']:.1f} ± {b['reward_std']:.1f}")
         print(f"  Episode Length: {b['length_mean']:.1f} ± {b['length_std']:.1f}")
-        print(f"  People Rescued: {b['rescued_mean']:.2f} ± {b['rescued_std']:.2f}")
+        print(f"  People Rescued: {b['rescued_mean']:.2f}")
         print(f"  Success Rate: {b['success_rate']:.1f}%")
-        print(f"  Lava Hits: {b['lava_hits_mean']:.2f}")
     
-    if stats.get('ppo'):
+    if metrics.get('ppo'):
+        p = metrics['ppo']
         print("\nPPO AGENT:")
-        p = stats['ppo']
         print(f"  Episodes: {p['count']}")
-        print(f"  Reward: {p['reward_mean']:.2f} ± {p['reward_std']:.2f}")
+        print(f"  Reward: {p['reward_mean']:.1f} ± {p['reward_std']:.1f}")
         print(f"  Episode Length: {p['length_mean']:.1f} ± {p['length_std']:.1f}")
-        print(f"  People Rescued: {p['rescued_mean']:.2f} ± {p['rescued_std']:.2f}")
+        print(f"  People Rescued: {p['rescued_mean']:.2f}")
         print(f"  Success Rate: {p['success_rate']:.1f}%")
-        print(f"  Lava Hits: {p['lava_hits_mean']:.2f}")
-        if 'nearest_frontier_percentage' in p:
-            print(f"  Nearest Frontier Selection: {p['nearest_frontier_percentage']:.1f}%")
-    
-    # Comparison
-    if stats.get('baseline') and stats.get('ppo'):
-        print("\nCOMPARISON:")
-        b, p = stats['baseline'], stats['ppo']
-        reward_diff = p['reward_mean'] - b['reward_mean']
-        success_diff = p['success_rate'] - b['success_rate']
         
-        print(f"  Reward Difference: {reward_diff:+.2f} (PPO - Baseline)")
+        if 'valid_picks' in p:
+            total = p['valid_picks'] + p['fallback_picks']
+            print(f"\n  FRONTIER SELECTION:")
+            print(f"    Total: {total}")
+            print(f"    Valid: {p['valid_picks']} ({100*p['valid_picks']/total:.1f}%)")
+            print(f"    Fallback: {p['fallback_picks']} ({100*p['fallback_picks']/total:.1f}%)")
+            if p['valid_picks'] > 0:
+                print(f"    Valid → Nearest: {p['valid_nearest_picks']}/{p['valid_picks']} "
+                      f"({p['nearest_percentage']:.1f}%)")
+    
+    if metrics.get('baseline') and metrics.get('ppo'):
+        print("\nCOMPARISON:")
+        reward_diff = metrics['ppo']['reward_mean'] - metrics['baseline']['reward_mean']
+        success_diff = metrics['ppo']['success_rate'] - metrics['baseline']['success_rate']
+        print(f"  Reward Difference: {reward_diff:+.1f} (PPO - Baseline)")
         print(f"  Success Rate Difference: {success_diff:+.1f}% (PPO - Baseline)")
     
     print("="*70)
 
 
-def plot_results(results: List[EpisodeResult], save_path: str = "comparison.png"):
-    """Generate comparison plots."""
-    baseline = [r for r in results if r.agent_type == "baseline"]
-    ppo = [r for r in results if r.agent_type == "ppo"]
-    
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('Baseline vs PPO Agent Comparison', fontsize=16, fontweight='bold')
-    
-    # Plot 1: Reward distribution
-    if baseline and ppo:
-        b_rewards = [r.total_reward for r in baseline]
-        p_rewards = [r.total_reward for r in ppo]
-        axes[0, 0].hist([b_rewards, p_rewards], label=['Baseline', 'PPO'],
-                       alpha=0.7, bins=20, edgecolor='black')
-        axes[0, 0].set_xlabel('Total Reward')
-        axes[0, 0].set_ylabel('Frequency')
-        axes[0, 0].set_title('Reward Distribution')
-        axes[0, 0].legend()
-        axes[0, 0].grid(True, alpha=0.3)
-    
-    # Plot 2: Success rate
-    if baseline or ppo:
-        rates = []
-        labels = []
-        if baseline:
-            rates.append(np.mean([r.success for r in baseline]) * 100)
-            labels.append('Baseline')
-        if ppo:
-            rates.append(np.mean([r.success for r in ppo]) * 100)
-            labels.append('PPO')
-        
-        bars = axes[0, 1].bar(labels, rates, color=['#FF6B6B', '#4ECDC4'], 
-                             edgecolor='black', linewidth=1.5)
-        axes[0, 1].set_ylabel('Success Rate (%)')
-        axes[0, 1].set_title('Success Rate')
-        axes[0, 1].set_ylim([0, 105])
-        axes[0, 1].grid(True, alpha=0.3, axis='y')
-        
-        for bar, rate in zip(bars, rates):
-            axes[0, 1].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
-                          f'{rate:.1f}%', ha='center', va='bottom', fontweight='bold')
-    
-    # Plot 3: People rescued
-    if baseline and ppo:
-        b_rescued = [r.people_rescued for r in baseline]
-        p_rescued = [r.people_rescued for r in ppo]
-        axes[1, 0].hist([b_rescued, p_rescued], label=['Baseline', 'PPO'],
-                       alpha=0.7, bins=range(max(b_rescued + p_rescued) + 2),
-                       edgecolor='black')
-        axes[1, 0].set_xlabel('People Rescued')
-        axes[1, 0].set_ylabel('Frequency')
-        axes[1, 0].set_title('People Rescued Distribution')
-        axes[1, 0].legend()
-        axes[1, 0].grid(True, alpha=0.3)
-    
-    # Plot 4: PPO nearest frontier selection
-    if ppo:
-        nearest_pct = []
-        for r in ppo:
-            if r.total_frontier_picks > 0:
-                nearest_pct.append(r.nearest_frontier_picks / r.total_frontier_picks * 100)
-        
-        if nearest_pct:
-            axes[1, 1].hist(nearest_pct, bins=20, alpha=0.7, 
-                          edgecolor='black', color='#4ECDC4')
-            axes[1, 1].axvline(np.mean(nearest_pct), color='red', 
-                             linestyle='--', linewidth=2, label=f'Mean: {np.mean(nearest_pct):.1f}%')
-            axes[1, 1].set_xlabel('% Nearest Frontier Selected')
-            axes[1, 1].set_ylabel('Frequency')
-            axes[1, 1].set_title('PPO: Nearest Frontier Selection Rate')
-            axes[1, 1].legend()
-            axes[1, 1].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"\nPlots saved to {save_path}")
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate Baseline vs PPO agents")
-    parser.add_argument("--ppo-model", type=str, default=None,
-                       help="Path to trained PPO model (optional)")
-    parser.add_argument("--num-episodes", type=int, default=50,
-                       help="Number of episodes per agent")
-    parser.add_argument("--max-steps", type=int, default=2000,
-                       help="Max steps per episode")
-    parser.add_argument("--seed-start", type=int, default=1000,
-                       help="Starting seed")
-    parser.add_argument("--save-prefix", type=str, default="eval",
-                       help="Prefix for output files")
-    parser.add_argument("--verbose", action="store_true",
-                       help="Print episode progress")
-    
+    parser = argparse.ArgumentParser(description="Compare Baseline vs PPO agents")
+    parser.add_argument("--ppo-model", type=str, default="ppo_frontier.zip")
+    parser.add_argument("--num-episodes", type=int, default=50)
+    parser.add_argument("--max-steps", type=int, default=2000)
+    parser.add_argument("--seed-start", type=int, default=1000)
+    parser.add_argument("--save-prefix", type=str, default="eval")
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     
-    # Environment config - matches your PPO training setup
+    # Environment configuration
     env_config = {
         'room_size': 6,
         'num_rows': 3,
@@ -497,96 +379,128 @@ def main():
     results = []
     seeds = list(range(args.seed_start, args.seed_start + args.num_episodes))
     
-    # Evaluate baseline
+    # Evaluate Baseline
     print("\n" + "="*70)
-    print("EVALUATING BASELINE AGENT")
+    print("Evaluating Baseline Agent")
     print("="*70)
     
     for i, seed in enumerate(seeds):
-        if args.verbose or i % 10 == 0:
-            print(f"\nBaseline Episode {i+1}/{args.num_episodes} (seed={seed})")
+        if i % 10 == 0:
+            print(f"Episode {i+1}/{args.num_episodes}")
         
-        try:
-            result = run_baseline_episode(env_config, seed, i, args.max_steps, args.verbose)
-            results.append(result)
-            
-            if args.verbose or i % 10 == 0:
-                print(f"  Result: reward={result.total_reward:.1f}, "
-                      f"rescued={result.people_rescued}, success={result.success}")
-        except Exception as e:
-            print(f"  ERROR: {e}")
+        result = run_baseline_episode(env_config, seed, i, args.max_steps)
+        results.append(result)
     
-    # Evaluate PPO if model provided
-    if args.ppo_model:
-        print(f"\nChecking for PPO model at: {args.ppo_model}")
-        print(f"Current directory: {os.getcwd()}")
-        print(f"File exists: {os.path.exists(args.ppo_model)}")
-        
-        if not os.path.exists(args.ppo_model):
-            print("\n" + "="*70)
-            print(f"ERROR: PPO model not found at {args.ppo_model}")
-            print("="*70)
-        else:
-            print("\n" + "="*70)
-            print("EVALUATING PPO AGENT")
-            print("="*70)
-            print(f"Loading model from {args.ppo_model}")
-            
-            try:
-                ppo_model = PPO.load(args.ppo_model)
-                
-                for i, seed in enumerate(seeds):
-                    if args.verbose or i % 10 == 0:
-                        print(f"\nPPO Episode {i+1}/{args.num_episodes} (seed={seed})")
-                    
-                    try:
-                        result = run_ppo_episode(ppo_model, env_config, seed, i, 
-                                                args.max_steps, args.verbose)
-                        results.append(result)
-                        
-                        if args.verbose or i % 10 == 0:
-                            nearest_pct = 0
-                            if result.total_frontier_picks > 0:
-                                nearest_pct = result.nearest_frontier_picks / result.total_frontier_picks * 100
-                            print(f"  Result: reward={result.total_reward:.1f}, "
-                                  f"rescued={result.people_rescued}, success={result.success}, "
-                                  f"nearest={nearest_pct:.1f}%")
-                    except Exception as e:
-                        print(f"  ERROR in episode: {e}")
-                        import traceback
-                        traceback.print_exc()
-            except Exception as e:
-                print(f"ERROR loading PPO model: {e}")
-                import traceback
-                traceback.print_exc()
-    else:
+    # Evaluate PPO
+    if os.path.exists(args.ppo_model):
         print("\n" + "="*70)
-        print("No PPO model specified (use --ppo-model to evaluate PPO)")
+        print("Evaluating PPO Agent")
         print("="*70)
+        
+        ppo_model = PPO.load(args.ppo_model)
+        
+        for i, seed in enumerate(seeds):
+            if args.verbose or i % 10 == 0:
+                print(f"\nEpisode {i+1}/{args.num_episodes} (seed={seed})")
+            
+            result = run_ppo_episode(ppo_model, env_config, seed, i, 
+                                    args.max_steps, args.verbose)
+            results.append(result)
+    else:
+        print(f"\nMissing PPO model, not found at {args.ppo_model}")
     
-    # Compute statistics
-    stats = compute_statistics(results)
-    print_statistics(stats)
-    
+    # Compute and print metrics
+    metrics = compute_metrics(results)
+    print_metrics(metrics)
+
     # Generate plots
     plot_file = f"{args.save_prefix}_comparison.png"
     plot_results(results, save_path=plot_file)
     
     # Save results
-    json_file = f"{args.save_prefix}_results.json"
-    data = {
+    output_data = {
         'env_config': env_config,
         'timestamp': datetime.now().isoformat(),
         'results': [asdict(r) for r in results],
-        'statistics': stats
+        'metrics': metrics
     }
     
+    json_file = f"{args.save_prefix}_results.json"
     with open(json_file, 'w') as f:
-        json.dump(data, f, indent=2)
+        json.dump(output_data, f, indent=2)
     
     print(f"\nResults saved to {json_file}")
-    print("\nEvaluation complete!")
+    print("\nEvaluation complete")
 
+def plot_results(results: List[EpisodeResult], save_path: str = "comparison.png"):
+    """Generate comparison plots with detailed frontier breakdown."""
+    baseline = [r for r in results if r.agent_type == "baseline"]
+    ppo = [r for r in results if r.agent_type == "ppo"]
+    
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle('Baseline vs PPO Agent Comparison', fontsize=16, fontweight='bold')
+    
+    # Plot 1: Reward distribution
+    if baseline and ppo:
+        b_rewards = [r.total_reward for r in baseline]
+        p_rewards = [r.total_reward for r in ppo]
+        
+        all_rewards = b_rewards + p_rewards
+        min_reward, max_reward = min(all_rewards), max(all_rewards)
+        
+        num_bins = 10
+        bin_edges = np.linspace(min_reward, max_reward, num_bins + 1)
+        b_counts, _ = np.histogram(b_rewards, bins=bin_edges)
+        p_counts, _ = np.histogram(p_rewards, bins=bin_edges)
+        
+        x = np.arange(num_bins)
+        width = 0.35
+        
+        axes[0, 0].bar(x - width/2, b_counts, width=width, 
+                      label='Baseline', color='#FF6B6B', edgecolor='black', linewidth=1.5, alpha=0.8)
+        axes[0, 0].bar(x + width/2, p_counts, width=width,
+                      label='PPO', color='#4ECDC4', edgecolor='black', linewidth=1.5, alpha=0.8)
+        
+        bin_labels = [f'{int(bin_edges[i])}-{int(bin_edges[i+1])}' for i in range(num_bins)]
+        axes[0, 0].set_xlabel('Total Reward Range', fontsize=11, fontweight='bold')
+        axes[0, 0].set_ylabel('Number of Episodes', fontsize=11, fontweight='bold')
+        axes[0, 0].set_title('Reward Distribution', fontsize=12, fontweight='bold')
+        axes[0, 0].set_xticks(x)
+        axes[0, 0].set_xticklabels(bin_labels, rotation=45, ha='right', fontsize=9)
+        axes[0, 0].legend(fontsize=10)
+        axes[0, 0].grid(True, alpha=0.3, axis='y')
+    
+    # Plot 2: People rescued distribution
+    if baseline and ppo:
+        max_people = 3
+        b_counts = [0] * (max_people + 1)
+        p_counts = [0] * (max_people + 1)
+        
+        for r in baseline:
+            if 0 <= r.people_rescued <= max_people:
+                b_counts[r.people_rescued] += 1
+        for r in ppo:
+            if 0 <= r.people_rescued <= max_people:
+                p_counts[r.people_rescued] += 1
+        
+        x = np.arange(max_people + 1)
+        width = 0.35
+        
+        axes[1, 0].bar(x - width/2, b_counts, width, label='Baseline', 
+                      color='#FF6B6B', edgecolor='black', linewidth=1.5, alpha=0.8)
+        axes[1, 0].bar(x + width/2, p_counts, width, label='PPO',
+                      color='#4ECDC4', edgecolor='black', linewidth=1.5, alpha=0.8)
+        
+        axes[1, 0].set_xlabel('Number of People Rescued', fontsize=11, fontweight='bold')
+        axes[1, 0].set_ylabel('Number of Episodes', fontsize=11, fontweight='bold')
+        axes[1, 0].set_title('People Rescued Distribution', fontsize=12, fontweight='bold')
+        axes[1, 0].set_xticks(x)
+        axes[1, 0].set_xticklabels(['0', '1', '2', '3 (Success)'])
+        axes[1, 0].legend(fontsize=10)
+        axes[1, 0].grid(True, alpha=0.3, axis='y')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"\nPlots saved to {save_path}")
 
 if __name__ == "__main__":
     main()
