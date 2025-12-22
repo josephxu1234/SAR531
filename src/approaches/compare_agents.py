@@ -1,13 +1,3 @@
-"""
-Comparison script for Baseline vs PPO agents
-This script:
-- Runs both agents (Baseline and PPO) on the same set of environments
-- Collects metrics (rewards, steps, success rate, people rescued)
-- Tracks how often PPO picks nearest frontier vs farther ones
-- Assuming you have a ppo_frontier.zip in the same directory containning the ppo model:
-- run: python compare_agents.py --ppo-model ppo_frontier.zip --num-episodes 100
-"""
-
 import argparse
 import json
 import numpy as np
@@ -222,7 +212,7 @@ def run_ppo_episode(ppo_model, env_config: Dict, seed: int, episode_id: int,
                 fallback_picks += 1
             
             if verbose and (valid_picks + fallback_picks) <= 5:
-                print(f"  Pick: action={action}, valid_frontiers={num_valid}, "
+                print(f"Pick: action={action}, valid_frontiers={num_valid}, "
                       f"is_valid={is_valid}, nearest={action==0}")
         
         obs, reward, terminated, truncated, _ = env.step(action)
@@ -249,7 +239,7 @@ def run_ppo_episode(ppo_model, env_config: Dict, seed: int, episode_id: int,
     if verbose:
         total = valid_picks + fallback_picks
         if total > 0:
-            print(f"  Summary: Valid={valid_picks}/{total} ({100*valid_picks/total:.1f}%), "
+            print(f"Summary: Valid={valid_picks}/{total} ({100*valid_picks/total:.1f}%), "
                   f"Valid_Nearest={valid_nearest_picks}/{valid_picks if valid_picks else 1} "
                   f"({100*valid_nearest_picks/max(1,valid_picks):.1f}%)")
     
@@ -316,37 +306,37 @@ def print_metrics(metrics: Dict):
     if metrics.get('baseline'):
         b = metrics['baseline']
         print("\nBASELINE AGENT:")
-        print(f"  Episodes: {b['count']}")
-        print(f"  Reward: {b['reward_mean']:.1f} ± {b['reward_std']:.1f}")
-        print(f"  Episode Length: {b['length_mean']:.1f} ± {b['length_std']:.1f}")
-        print(f"  People Rescued: {b['rescued_mean']:.2f}")
-        print(f"  Success Rate: {b['success_rate']:.1f}%")
+        print(f"Episodes: {b['count']}")
+        print(f"Reward: {b['reward_mean']:.1f} +/- {b['reward_std']:.1f}")
+        print(f"Episode Length: {b['length_mean']:.1f} +/- {b['length_std']:.1f}")
+        print(f"People Rescued: {b['rescued_mean']:.2f}")
+        print(f"Success Rate: {b['success_rate']:.1f}%")
     
     if metrics.get('ppo'):
         p = metrics['ppo']
         print("\nPPO AGENT:")
-        print(f"  Episodes: {p['count']}")
-        print(f"  Reward: {p['reward_mean']:.1f} ± {p['reward_std']:.1f}")
-        print(f"  Episode Length: {p['length_mean']:.1f} ± {p['length_std']:.1f}")
-        print(f"  People Rescued: {p['rescued_mean']:.2f}")
-        print(f"  Success Rate: {p['success_rate']:.1f}%")
+        print(f"Episodes: {p['count']}")
+        print(f"Reward: {p['reward_mean']:.1f} +/- {p['reward_std']:.1f}")
+        print(f"Episode Length: {p['length_mean']:.1f} +/- {p['length_std']:.1f}")
+        print(f"People Rescued: {p['rescued_mean']:.2f}")
+        print(f"Success Rate: {p['success_rate']:.1f}%")
         
         if 'valid_picks' in p:
             total = p['valid_picks'] + p['fallback_picks']
             print(f"\n  FRONTIER SELECTION:")
-            print(f"    Total: {total}")
-            print(f"    Valid: {p['valid_picks']} ({100*p['valid_picks']/total:.1f}%)")
-            print(f"    Fallback: {p['fallback_picks']} ({100*p['fallback_picks']/total:.1f}%)")
+            print(f"Total: {total}")
+            print(f"Valid: {p['valid_picks']} ({100*p['valid_picks']/total:.1f}%)")
+            print(f"Fallback: {p['fallback_picks']} ({100*p['fallback_picks']/total:.1f}%)")
             if p['valid_picks'] > 0:
-                print(f"    Valid → Nearest: {p['valid_nearest_picks']}/{p['valid_picks']} "
+                print(f"Valid to Nearest: {p['valid_nearest_picks']}/{p['valid_picks']} "
                       f"({p['nearest_percentage']:.1f}%)")
     
     if metrics.get('baseline') and metrics.get('ppo'):
         print("\nCOMPARISON:")
         reward_diff = metrics['ppo']['reward_mean'] - metrics['baseline']['reward_mean']
         success_diff = metrics['ppo']['success_rate'] - metrics['baseline']['success_rate']
-        print(f"  Reward Difference: {reward_diff:+.1f} (PPO - Baseline)")
-        print(f"  Success Rate Difference: {success_diff:+.1f}% (PPO - Baseline)")
+        print(f"Reward Difference: {reward_diff:+.1f} (PPO - Baseline)")
+        print(f"Success Rate Difference: {success_diff:+.1f}% (PPO - Baseline)")
     
     print("="*70)
 
