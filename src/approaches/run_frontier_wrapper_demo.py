@@ -1,12 +1,3 @@
-"""
-Greedy demonstration for `FrontierSelectionEnv`.
-
-The policy here is intentionally simple: at each step pick the currently known
-frontier with minimal Manhattan distance to the agent (mirrors the heuristic in
-`SearchAgent`). Rescue is handled automatically by the wrapper once a person is
-known.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -18,10 +9,9 @@ from stable_baselines3 import PPO
 from SAREnv import SAREnv
 from ppo_frontier_wrapper import FrontierSelectionEnv
 
-
+# greedy policy
 def pick_nearest_frontier(frontiers: np.ndarray, agent_pos: np.ndarray) -> int | None:
     """Return index of nearest valid frontier; None if none exist."""
-    # frontiers is shaped (limit, 2) with -1 padding
     mask = frontiers[:, 0] >= 0
     if not np.any(mask):
         return None

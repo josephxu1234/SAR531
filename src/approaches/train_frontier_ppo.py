@@ -1,4 +1,3 @@
-"""Train PPO to pick frontiers using FrontierSelectionEnv with a custom CNN+MLP."""
 from __future__ import annotations
 
 import argparse
@@ -23,7 +22,7 @@ class FrontierFeaturesExtractor(BaseFeaturesExtractor):
     """Custom extractor combining knowledge grid (CNN) and frontier features (MLP)."""
 
     def __init__(self, observation_space: gym.spaces.Dict, frontier_limit: int):
-        super().__init__(observation_space, features_dim=1)  # will set real dim below
+        super().__init__(observation_space, features_dim=1) 
         self.frontier_limit = frontier_limit
 
         k_space = observation_space["knowledge"]
@@ -31,7 +30,7 @@ class FrontierFeaturesExtractor(BaseFeaturesExtractor):
         self.num_classes = 13  # states 0-12
         w, h = self.grid_shape
 
-        # CNN over one-hot knowledge grid (channels=13)
+        # CNN over one-hot knowledge grid
         self.conv = nn.Sequential(
             nn.Conv2d(self.num_classes, 32, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -42,11 +41,9 @@ class FrontierFeaturesExtractor(BaseFeaturesExtractor):
         conv_out_dim = 64 * w * h
 
         # Frontier + agent MLP
-        # Per-frontier features: coords(2) + dist_to_agent(1) + dist_exit(1)
-        # + dist_person(1) + local cell onehot(13) = 18
         self.per_frontier_feats = 18
         frontier_dim = frontier_limit * self.per_frontier_feats
-        frontier_mask_dim = frontier_limit  # valid mask
+        frontier_mask_dim = frontier_limit 
         agent_misc_dim = 2 + 4 + 1  # pos(2) + dir one-hot(4) + rescued(1)
         mlp_in = frontier_dim + frontier_mask_dim + agent_misc_dim
 
@@ -64,7 +61,7 @@ class FrontierFeaturesExtractor(BaseFeaturesExtractor):
         self.people_high = float(observation_space["people_rescued"].high[0])
 
     def forward(self, observations: Dict[str, torch.Tensor]) -> torch.Tensor:
-        # Knowledge grid -> one-hot channels (B, C=13, W, H)
+        # Knowledge grid -> one-hot channels
         k_int = observations["knowledge"].long()  # (B, W, H)
         k_onehot = F.one_hot(k_int, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
         conv_feats = self.conv(k_onehot)
@@ -151,7 +148,7 @@ class FrontierFeaturesExtractor(BaseFeaturesExtractor):
 
 
 class ProgressCallback(EventCallback):
-    """Lightweight console progress printer."""
+    """Lightweight progress printer."""
 
     def __init__(self, print_freq_steps: int = 5000):
         super().__init__()
@@ -189,7 +186,6 @@ class ProgressCallback(EventCallback):
             self.last_print = self.model.num_timesteps
             self.ep_since_print = 0
         return True
-
 
 def make_env(frontier_limit: int) -> Callable[[], gym.Env]:
     def _init():

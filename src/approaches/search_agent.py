@@ -1,7 +1,6 @@
 import sys
 import os
 
-# Add the parent directory to sys.path to allow imports from src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import numpy as np
@@ -9,7 +8,7 @@ from minigrid.core.constants import OBJECT_TO_IDX, COLOR_TO_IDX
 from SAREnv import SAREnv
 from collections import deque
 
-# Map States - expanded to include floor colors and doors
+# Map States 
 UNKNOWN = 0
 EMPTY = 1
 WALL = 2
@@ -25,7 +24,7 @@ FLOOR_PURPLE = 10
 FLOOR_YELLOW = 11
 FLOOR_GREY = 12
 
-# Helper: which states are walkable for pathfinding
+# which states are walkable for pathfinding
 WALKABLE_STATES = {EMPTY, EXIT, PERSON, DOOR, FLOOR_RED, FLOOR_GREEN, FLOOR_BLUE, FLOOR_PURPLE, FLOOR_YELLOW, FLOOR_GREY}
 
 class SearchAgent:
@@ -65,7 +64,6 @@ class SearchAgent:
 
     def _update_frontier_set(self, x, y):
         """
-        Called when cell (x, y) changes from UNKNOWN to KNOWN.
         Updates the frontier set for (x, y) and its neighbors.
         """
         # If it's walkable and has unknown neighbors, it's a frontier
@@ -88,8 +86,6 @@ class SearchAgent:
     def update_map(self, obs, agent_pos, agent_dir):
         """
         Projects the local agent view (obs) onto the global knowledge grid.
-        MiniGrid convention: obs['image'] is (width, height, 3)
-        Agent sees forward in its view, positioned at bottom-center
         """
         view = obs['image']  # shape (view_width, view_height, 3)
         view_width = view.shape[0]
@@ -131,6 +127,7 @@ class SearchAgent:
                 # Determine new state based on object type
                 new_state = UNKNOWN
                 
+                # TODO: clean this up?
                 if obj_type_idx == OBJECT_TO_IDX['wall']:
                     new_state = WALL
                 elif obj_type_idx == OBJECT_TO_IDX['lava']:
@@ -231,21 +228,11 @@ class SearchAgent:
         """Called after successful rescue"""
         if self.knowledge_grid[pos] == PERSON:
             self.knowledge_grid[pos] = EMPTY
-            # Re-add this area to frontiers so we look through it again if needed
             self._update_frontier_set(pos[0], pos[1])
-
-    def mark_unreachable(self, pos):
-        """Mark a position as unreachable (treat as wall for pathfinding)"""
-        # We don't want to mark it as WALL permanently because it might be reachable later
-        # But for now, let's just log it. 
-        # In a more complex system, we'd have a separate 'unreachable' set.
-        print(f"Marking {pos} as unreachable for now.")
-        pass
 
     def search_until_new_discovery(self):
         """
         Runs the get_action loop for one step.
-        Returns: 'CONTINUE', 'FOUND_NEW_PERSON', 'EXPLORED_ALL'
         """
         # Check if we already know about a person
         if len(self.get_known_people_locations()) > 0:
@@ -254,9 +241,6 @@ class SearchAgent:
         action = self.get_action(self.env.agent_pos, self.env.agent_dir)
         
         if action is None:
-            # get_action returns None if:
-            # 1. Person found (handled above)
-            # 2. No frontiers (EXPLORED_ALL)
             return 'EXPLORED_ALL'
             
         # Execute the action
@@ -278,7 +262,6 @@ class SearchAgent:
         
         if self.stuck_count > 2:  # Stuck for multiple steps
             # We are stuck
-            # Mark the cell in front as blocked (WALL) so we don't try again.
             if self.last_action == self.env.actions.forward:
                 self.mark_wall_in_front(agent_pos, agent_dir)
             
@@ -289,21 +272,17 @@ class SearchAgent:
             return self.last_action
         
         # Check if we found the person
-        # In multi-person mode, we don't stop just because we see ONE person
-        # We stop if we see a NEW person that we haven't rescued yet.
-        # But get_action is low-level. The controller handles the "stop if person found" logic.
-        # Here we just return None if we found someone so the controller can check.
         people_locs = np.argwhere(self.knowledge_grid == PERSON)
         if len(people_locs) > 0:
             print("Person found at:", people_locs[0])
-            return None  # Stop searching - let controller handle rescue
+            return None  # Stop searching, let controller handle rescue
             
         # Get Frontiers from cached set
         if not self.frontiers:
             print("No frontiers remaining.")
             # Check if we've explored enough
             explored_pct = np.sum(self.knowledge_grid != UNKNOWN) / self.knowledge_grid.size
-            if explored_pct > 0.8:  # Explored 80% of map
+            if explored_pct > 0.95:  # Explored 95% of map
                 print("Map mostly explored, person not found.")
                 return None
             else:
@@ -320,10 +299,10 @@ class SearchAgent:
         sorted_frontiers = sorted(list(self.frontiers), 
                                 key=lambda f: abs(f[0]-agent_pos[0]) + abs(f[1]-agent_pos[1]))
         
-        # Check the closest frontiers (optimization)
+        # Check the closest frontiers
         checked = 0
         for f in sorted_frontiers: 
-            if checked >= 10:  # Don't check too many
+            if checked >= 10:
                 break
             path = self.find_path_bfs(agent_pos, f)
             if path:
@@ -336,7 +315,7 @@ class SearchAgent:
         
         if best_path is None:
             print("No reachable frontiers remaining.")
-            # All frontiers are unreachable - exploration is done
+            # All frontiers are unreachable
             return None
         
         # check len(best_path) >= 2 bc len 1 path means agent is already at frontier
@@ -400,19 +379,3 @@ def run_search_demo():
 
 if __name__ == "__main__":
     final_map, env = run_search_demo()
-    
-    print("\nFinal Internal Map:")
-    chars = {
-        UNKNOWN: '?', EMPTY: '.', WALL: '#', LAVA: 'X', EXIT: 'E', PERSON: 'P', DOOR: 'D',
-        FLOOR_RED: 'r', FLOOR_GREEN: 'g', FLOOR_BLUE: 'b', FLOOR_PURPLE: 'p', FLOOR_YELLOW: 'y', FLOOR_GREY: 'G'
-    }
-    for y in range(final_map.shape[1]):
-        line = ""
-        for x in range(final_map.shape[0]):
-            line += chars.get(final_map[x, y], '?')
-        print(line)
-
-    print("\nMap Statistics:")
-    print(f"Unknown cells: {np.sum(final_map == UNKNOWN)}")
-    print(f"Known cells: {np.sum(final_map != UNKNOWN)}")
-    print(f"People found: {np.sum(final_map == PERSON)}")

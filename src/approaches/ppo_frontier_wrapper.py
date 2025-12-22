@@ -1,42 +1,3 @@
-"""
-Wrapper environment that reduces the PPO action space to frontier selection.
-
-The wrapped agent only chooses which frontier cell to head toward next. The
-wrapper takes care of:
-1) Maintaining the knowledge grid via `SearchAgent` so frontiers are always
-   up-to-date and non-stale.
-2) Translating a chosen frontier into primitive MiniGrid actions (turn/forward)
-   and executing one low-level step.
-3) Automatically switching to rescue mode (path to person, pickup, deliver to
-   exit) when a person is already known, using the existing search/rescue
-   logic as guidance.
-
-Observation space
------------------
-Dict containing:
-* ``knowledge``: (W,H) int8 grid of known cell states (see search_agent.py
-  constants).
-* ``agent_pos``: (2,) int16 position of the agent in global coords.
-* ``agent_dir``: (1,) int8 direction (0=right,1=down,2=left,3=up).
-* ``frontiers``: (F,2) int16 list of frontier coordinates padded with -1,
-  sorted by Manhattan distance to the agent. ``F`` is configurable via
-  ``frontier_limit``.
-* ``people_rescued``: (1,) int16 count from the underlying env.
-
-Action space
-------------
-Discrete(frontier_limit). Index selects one of the currently cached frontiers
-after sorting by distance. If the chosen index is out of range, the wrapper
-falls back to the nearest frontier. When no frontiers exist and no people are
-known, the episode terminates early with zero reward.
-
-Reward / termination
---------------------
-Rewards are the sum of the underlying `SAREnv` rewards for the executed
-primitive actions. Termination/truncation mirrors the base environment or
-occurs when exploration is exhausted and no persons are known.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
@@ -101,9 +62,6 @@ class FrontierSelectionEnv(gym.Env):
             }
         )
 
-    # ------------------------------------------------------------------
-    # Gym API
-    # ------------------------------------------------------------------
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         self.search_agent = SearchAgent(self.env)
@@ -112,9 +70,8 @@ class FrontierSelectionEnv(gym.Env):
 
     def step(self, action: int):
         """
-        If a person is already known, run rescue automatically (sequence of
-        primitive steps). Otherwise, treat the action as the selected frontier
-        index and execute a single primitive action toward that frontier.
+        If a person is already known, run rescue automatically.
+        Otherwise, treat the action as the selected frontier.
         """
 
         total_reward = 0.0
@@ -127,26 +84,28 @@ class FrontierSelectionEnv(gym.Env):
             delivery_reward, terminated, truncated, info, obs = self._deliver_to_exit()
             total_reward += delivery_reward
 
-            # If delivery failed due to missing/blocked exit, fall back to exploration
+            # If delivery failed
             rescue_failed = info.get("rescue_failed")
             if not terminated and not truncated and rescue_failed in {"no_exit_known", "path_blocked"}:
-                pass  # continue into exploration logic below
+                pass  # continue into exploration logic
             else:
                 self._prune_missing_people()
                 return obs, total_reward, terminated, truncated, info
 
-        # Rescue mode when any person is known (but not yet picked up)
+        # Rescue mode when any person is known
         known_people = self.search_agent.get_known_people_locations()
         if known_people:
+            # call run rescue subroutine
             rescue_reward, terminated, truncated, info, obs = self._run_rescue(known_people[0])
             total_reward += rescue_reward
             if terminated or truncated:
+                # keep knowledge up to date
                 self._prune_missing_people()
                 return obs, total_reward, terminated, truncated, info
             self._prune_missing_people()
             return self._build_obs(), total_reward, terminated, truncated, info
 
-        # No known person -> frontier-driven exploration
+        # No known person, proceed with exploration via frontier selection
         frontier_list = self._sorted_frontiers()
         if not frontier_list:
             # Nothing left to explore
@@ -159,7 +118,7 @@ class FrontierSelectionEnv(gym.Env):
             target_idx = 0  # Fallback to nearest frontier
         target_frontier = frontier_list[target_idx]
 
-        # Plan path to frontier and take one primitive step along it
+        # Plan path to frontier
         path = self._find_path(
             tuple(self.env.agent_pos), target_frontier, allow_person=self.env.carrying is None
         )
@@ -177,15 +136,12 @@ class FrontierSelectionEnv(gym.Env):
 
         return obs, total_reward, terminated, truncated, info
 
-    def render(self):  # pragma: no cover - passthrough
+    def render(self):
         return self.env.render()
 
-    def close(self):  # pragma: no cover - passthrough
+    def close(self):
         return self.env.close()
 
-    # ------------------------------------------------------------------
-    # Rescue logic (macro executed internally)
-    # ------------------------------------------------------------------
     def _run_rescue(self, person_pos: Tuple[int, int]):
         """Run a full rescue sequence for the first known person."""
 
@@ -206,20 +162,20 @@ class FrontierSelectionEnv(gym.Env):
         adj_target = min(
             adjacent_targets,
             key=lambda p: abs(p[0] - start[0]) + abs(p[1] - start[1]),
-        )
+        ) # sort by manhattan distance
 
         reward_path, terminated, truncated, info, obs = self._follow_path(adj_target, info)
         total_reward += reward_path
         if terminated or truncated:
             return total_reward, terminated, truncated, info, obs
 
-        # Step 2: pickup person (ensure facing)
+        # Step 2: pickup person
         reward_pickup, terminated, truncated, info, obs = self._pickup_at(person_pos, info)
         total_reward += reward_pickup
         if terminated or truncated:
             return total_reward, terminated, truncated, info, obs
 
-        # Step 3: navigate to nearest exit (may continue delivering later if interrupted)
+        # Step 3: navigate to nearest exit
         reward_exit, terminated, truncated, info, obs = self._deliver_to_exit(info)
         total_reward += reward_exit
         return total_reward, terminated, truncated, info, obs
@@ -242,7 +198,7 @@ class FrontierSelectionEnv(gym.Env):
         reward_exit, terminated, truncated, info, obs = self._follow_path(exit_pos, info)
         total_reward += reward_exit
 
-        # If we delivered successfully, clear carrying and memory cleanup
+        # If we delivered successfully
         if self.env.carrying is None:
             info["delivered"] = True
             # Make sure any stale person markers are removed
@@ -316,9 +272,6 @@ class FrontierSelectionEnv(gym.Env):
 
         return total_reward, terminated, truncated, info, obs
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
     def _sorted_frontiers(self) -> List[Tuple[int, int]]:
         agent_pos = tuple(self.env.agent_pos)
         if self.env.carrying is not None:
@@ -333,6 +286,7 @@ class FrontierSelectionEnv(gym.Env):
             key=lambda f: abs(f[0] - agent_pos[0]) + abs(f[1] - agent_pos[1]),
         )
 
+    # for returning observations to PPO
     def _build_obs(self):
         frontier_list = self._sorted_frontiers()
         padded_frontiers = np.full((self.frontier_limit, 2), -1, dtype=np.int16)
@@ -379,7 +333,7 @@ class FrontierSelectionEnv(gym.Env):
                 self.search_agent.update_map(obs_raw, self.env.agent_pos, self.env.agent_dir)
                 if terminated or truncated:
                     return self._build_obs(), reward, terminated, truncated, info
-                # Refresh desired_dir in case orientation changed (it shouldn't)
+                # Refresh desired_dir
                 desired_dir = self._direction_to(next_cell)
                 if desired_dir != self.env.agent_dir:
                     turn_action = self._turn_action(desired_dir)
@@ -461,7 +415,7 @@ class FrontierSelectionEnv(gym.Env):
             return self.env.actions.right
         if diff == 3:
             return self.env.actions.left
-        # 180 turn: choose right-right for determinism
+        # 180 turn: choose right-right
         return self.env.actions.right
 
     def _adjacent_walkable(self, pos: Tuple[int, int]) -> List[Tuple[int, int]]:
